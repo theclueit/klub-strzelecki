@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
-import { Shield, Calendar, Target, Users, Plus, Trash2, Pencil, Save, X, UserPlus, ChevronDown, ChevronUp } from 'lucide-react'
+import { Shield, Calendar, Target, Users, Plus, Trash2, Pencil, Save, X, UserPlus, ChevronDown, ChevronUp, ClipboardList, Check, Ban } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import type { Discipline, Member } from '@/types/database'
 
@@ -27,7 +27,21 @@ interface EventJudge {
   judge_id: string
 }
 
-type Tab = 'events' | 'disciplines' | 'judges'
+interface GuestReg {
+  id: string
+  event_id: string
+  full_name: string
+  email: string
+  phone: string | null
+  experience: string | null
+  has_license: boolean
+  license_number: string | null
+  message: string | null
+  registered_at: string
+  status: string
+}
+
+type Tab = 'events' | 'disciplines' | 'judges' | 'registrations'
 
 export default function AdminPage() {
   const { member, loading } = useAuth()
@@ -40,6 +54,8 @@ export default function AdminPage() {
   const [judges, setJudges] = useState<Member[]>([])
   const [eventJudges, setEventJudges] = useState<EventJudge[]>([])
   const [allMembers, setAllMembers] = useState<Member[]>([])
+  const [guestRegs, setGuestRegs] = useState<GuestReg[]>([])
+  const [memberRegs, setMemberRegs] = useState<{ id: string; event_id: string; member_id: string; registered_at: string; status: string; member?: Member }[]>([])
 
   // Modals
   const [showEventForm, setShowEventForm] = useState(false)
@@ -69,18 +85,22 @@ export default function AdminPage() {
   }, [member, loading])
 
   async function loadAll() {
-    const [evRes, discRes, judgesRes, ejRes, membersRes] = await Promise.all([
+    const [evRes, discRes, judgesRes, ejRes, membersRes, guestRes, memberRegsRes] = await Promise.all([
       supabase.from('events').select('*').order('start_date', { ascending: false }),
       supabase.from('disciplines').select('*').order('name'),
       supabase.from('members').select('*').in('role', ['judge', 'admin']).order('full_name'),
       supabase.from('event_judges').select('*'),
       supabase.from('members').select('*').eq('is_active', true).order('full_name'),
+      supabase.from('guest_registrations').select('*').order('registered_at', { ascending: false }),
+      supabase.from('event_registrations').select('*, member:members(full_name, email, license_number)').order('registered_at', { ascending: false }),
     ])
     setEvents((evRes.data ?? []) as EventRow[])
     setDisciplines((discRes.data ?? []) as Discipline[])
     setJudges((judgesRes.data ?? []) as Member[])
     setEventJudges((ejRes.data ?? []) as EventJudge[])
     setAllMembers((membersRes.data ?? []) as Member[])
+    setGuestRegs((guestRes.data ?? []) as GuestReg[])
+    setMemberRegs((memberRegsRes.data ?? []) as any[])
   }
 
   // ---- EVENTS ----
@@ -249,6 +269,7 @@ export default function AdminPage() {
         {[
           { key: 'events' as Tab, label: 'Zawody / Wydarzenia', icon: Calendar },
           { key: 'disciplines' as Tab, label: 'Dyscypliny', icon: Target },
+          { key: 'registrations' as Tab, label: 'Zgłoszenia', icon: ClipboardList },
           { key: 'judges' as Tab, label: 'Sędziowie', icon: Users },
         ].map(({ key, label, icon: Icon }) => (
           <button
@@ -591,6 +612,128 @@ export default function AdminPage() {
               <p className="text-sm text-muted">Wszyscy członkowie mają już rolę sędziego lub admina.</p>
             )}
           </div>
+        </div>
+      )}
+      {/* ============ REGISTRATIONS TAB ============ */}
+      {tab === 'registrations' && (
+        <div>
+          <h2 className="text-lg font-semibold mb-4">
+            Zgłoszenia na wydarzenia
+          </h2>
+
+          {events.map(ev => {
+            const evMemberRegs = memberRegs.filter(r => r.event_id === ev.id)
+            const evGuestRegs = guestRegs.filter(r => r.event_id === ev.id)
+            const total = evMemberRegs.length + evGuestRegs.length
+            if (total === 0) return null
+
+            return (
+              <div key={ev.id} className="mb-6">
+                <h3 className="font-semibold mb-2 flex items-center gap-2">
+                  {ev.title}
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary font-medium">
+                    {total} {total === 1 ? 'zgłoszenie' : total < 5 ? 'zgłoszenia' : 'zgłoszeń'}
+                  </span>
+                </h3>
+
+                <div className="bg-card border border-border rounded-xl overflow-hidden">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-border text-xs text-muted">
+                        <th className="text-left px-4 py-2">Typ</th>
+                        <th className="text-left px-4 py-2">Nazwisko</th>
+                        <th className="text-left px-4 py-2">Email</th>
+                        <th className="text-left px-4 py-2">Telefon</th>
+                        <th className="text-left px-4 py-2">Status</th>
+                        <th className="text-right px-4 py-2">Akcje</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {evMemberRegs.map(r => (
+                        <tr key={r.id} className="border-b border-border/50 hover:bg-card-hover text-sm">
+                          <td className="px-4 py-2">
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary font-medium">Członek</span>
+                          </td>
+                          <td className="px-4 py-2 font-medium">{(r.member as any)?.full_name ?? '-'}</td>
+                          <td className="px-4 py-2 text-muted">{(r.member as any)?.email}</td>
+                          <td className="px-4 py-2 text-muted">-</td>
+                          <td className="px-4 py-2">
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-success/20 text-success">{r.status}</span>
+                          </td>
+                          <td className="px-4 py-2 text-right">-</td>
+                        </tr>
+                      ))}
+                      {evGuestRegs.map(r => (
+                        <tr key={r.id} className="border-b border-border/50 hover:bg-card-hover text-sm">
+                          <td className="px-4 py-2">
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 font-medium">Gość</span>
+                          </td>
+                          <td className="px-4 py-2 font-medium">
+                            {r.full_name}
+                            {r.has_license && <span className="text-xs text-muted ml-1">(lic: {r.license_number})</span>}
+                          </td>
+                          <td className="px-4 py-2 text-muted">{r.email}</td>
+                          <td className="px-4 py-2 text-muted">{r.phone ?? '-'}</td>
+                          <td className="px-4 py-2">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                              r.status === 'confirmed' ? 'bg-success/20 text-success' :
+                              r.status === 'cancelled' ? 'bg-danger/20 text-danger' :
+                              'bg-warning/20 text-warning'
+                            }`}>{r.status === 'pending' ? 'oczekuje' : r.status === 'confirmed' ? 'potwierdzony' : 'anulowany'}</span>
+                          </td>
+                          <td className="px-4 py-2 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              {r.status === 'pending' && (
+                                <>
+                                  <button
+                                    onClick={async () => { await supabase.from('guest_registrations').update({ status: 'confirmed' }).eq('id', r.id); loadAll() }}
+                                    className="p-1.5 text-muted hover:text-success rounded hover:bg-card-hover" title="Potwierdź"
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={async () => { await supabase.from('guest_registrations').update({ status: 'cancelled' }).eq('id', r.id); loadAll() }}
+                                    className="p-1.5 text-muted hover:text-danger rounded hover:bg-card-hover" title="Odrzuć"
+                                  >
+                                    <Ban className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
+                              {r.status !== 'pending' && (
+                                <button
+                                  onClick={async () => { await supabase.from('guest_registrations').update({ status: 'pending' }).eq('id', r.id); loadAll() }}
+                                  className="p-1.5 text-xs text-muted hover:text-foreground rounded hover:bg-card-hover"
+                                >
+                                  Cofnij
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {evGuestRegs.some(r => r.message) && (
+                  <div className="mt-2 space-y-1">
+                    {evGuestRegs.filter(r => r.message).map(r => (
+                      <p key={r.id} className="text-xs text-muted italic px-2">
+                        {r.full_name}: &ldquo;{r.message}&rdquo;
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+
+          {events.every(ev => {
+            const total = memberRegs.filter(r => r.event_id === ev.id).length + guestRegs.filter(r => r.event_id === ev.id).length
+            return total === 0
+          }) && (
+            <p className="text-muted">Brak zgłoszeń na żadne wydarzenie.</p>
+          )}
         </div>
       )}
     </div>

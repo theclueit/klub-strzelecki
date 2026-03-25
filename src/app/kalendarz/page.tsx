@@ -5,7 +5,7 @@ import EventCard from '@/components/EventCard'
 export const revalidate = 60
 
 export default async function CalendarPage() {
-  const [eventsRes, registrationsRes] = await Promise.all([
+  const [eventsRes, memberRegsRes, guestRegsRes] = await Promise.all([
     supabase
       .from('events')
       .select('*, discipline:disciplines(name)')
@@ -13,16 +13,23 @@ export default async function CalendarPage() {
       .order('start_date', { ascending: true }),
     supabase
       .from('event_registrations')
-      .select('event_id, member_id'),
+      .select('event_id'),
+    supabase
+      .from('guest_registrations')
+      .select('event_id')
+      .neq('status', 'cancelled'),
   ])
 
   const events = eventsRes.data ?? []
-  const registrations = (registrationsRes.data ?? []) as { event_id: string; member_id: string }[]
 
-  const regCounts = registrations.reduce<Record<string, number>>((acc, r) => {
-    acc[r.event_id] = (acc[r.event_id] || 0) + 1
-    return acc
-  }, {})
+  // Count both member and guest registrations per event
+  const regCounts: Record<string, number> = {}
+  for (const r of (memberRegsRes.data ?? []) as { event_id: string }[]) {
+    regCounts[r.event_id] = (regCounts[r.event_id] || 0) + 1
+  }
+  for (const r of (guestRegsRes.data ?? []) as { event_id: string }[]) {
+    regCounts[r.event_id] = (regCounts[r.event_id] || 0) + 1
+  }
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-12">
