@@ -23,6 +23,7 @@ export interface Discipline {
   name: string
   description: string | null
   target_type: string | null
+  default_price_pln: number
 }
 
 export interface Event {

@@ -102,7 +102,7 @@ export default function AdminPage() {
     max_participants: '', is_published: true,
   })
   const [disciplineForm, setDisciplineForm] = useState({
-    name: '', description: '', target_type: '' as string,
+    name: '', description: '', target_type: '' as string, default_price_pln: '0',
   })
   // Event disciplines management
   const [editingEventDisciplines, setEditingEventDisciplines] = useState<{ discipline_id: string; price_pln: string }[]>([])
@@ -190,7 +190,8 @@ export default function AdminPage() {
     const used = new Set(editingEventDisciplines.map(d => d.discipline_id))
     const available = disciplines.filter(d => !used.has(d.id))
     if (available.length === 0) return
-    setEditingEventDisciplines(prev => [...prev, { discipline_id: available[0].id, price_pln: '0' }])
+    const disc = available[0]
+    setEditingEventDisciplines(prev => [...prev, { discipline_id: disc.id, price_pln: String(disc.default_price_pln ?? 0) }])
   }
 
   function removeDisciplineFromEvent(index: number) {
@@ -198,7 +199,15 @@ export default function AdminPage() {
   }
 
   function updateEventDiscipline(index: number, field: 'discipline_id' | 'price_pln', value: string) {
-    setEditingEventDisciplines(prev => prev.map((d, i) => i === index ? { ...d, [field]: value } : d))
+    setEditingEventDisciplines(prev => prev.map((d, i) => {
+      if (i !== index) return d
+      if (field === 'discipline_id') {
+        // Auto-fill price from discipline defaults
+        const disc = disciplines.find(dd => dd.id === value)
+        return { ...d, discipline_id: value, price_pln: String(disc?.default_price_pln ?? d.price_pln) }
+      }
+      return { ...d, [field]: value }
+    }))
   }
 
   async function saveEvent(e: React.FormEvent) {
@@ -284,7 +293,7 @@ export default function AdminPage() {
   // ---- DISCIPLINES ----
   function openNewDiscipline() {
     setEditingDiscipline(null)
-    setDisciplineForm({ name: '', description: '', target_type: '' })
+    setDisciplineForm({ name: '', description: '', target_type: '', default_price_pln: '0' })
     setShowDisciplineForm(true)
     setError('')
   }
@@ -295,6 +304,7 @@ export default function AdminPage() {
       name: d.name,
       description: d.description ?? '',
       target_type: d.target_type ?? '',
+      default_price_pln: String(d.default_price_pln ?? 0),
     })
     setShowDisciplineForm(true)
     setError('')
@@ -309,6 +319,7 @@ export default function AdminPage() {
       name: disciplineForm.name,
       description: disciplineForm.description || null,
       target_type: disciplineForm.target_type || null,
+      default_price_pln: parseFloat(disciplineForm.default_price_pln) || 0,
     }
 
     let err
@@ -389,14 +400,29 @@ export default function AdminPage() {
     const ev = events.find(e => e.id === eventId)
     if (!ev) return
     const evDiscs = getEventDiscs(eventId)
-    if (evDiscs.length === 0) { alert('Brak dyscyplin przypisanych do wydarzenia.'); return }
+    if (evDiscs.length === 0) { alert('Brak dyscyplin przypisanych do wydarzenia. Najpierw edytuj wydarzenie i dodaj dyscypliny.'); return }
+
+    if (!ev.stations_count) {
+      const input = prompt('Podaj liczbę stanowisk (max uczestników na slot):', '10')
+      if (!input) return
+      const count = parseInt(input)
+      if (isNaN(count) || count < 1) { alert('Nieprawidłowa liczba.'); return }
+      // Save stations_count to event
+      await supabase.from('events').update({ stations_count: count }).eq('id', eventId)
+      ev.stations_count = count
+    }
 
     const startDate = new Date(ev.start_date)
-    const endDate = ev.end_date ? new Date(ev.end_date) : new Date(startDate.getTime() + 8 * 60 * 60 * 1000) // default 8h if no end
+    const endDate = ev.end_date ? new Date(ev.end_date) : new Date(startDate.getTime() + 8 * 60 * 60 * 1000)
 
     if (endDate <= startDate) {
-      alert('Data zakonczenia musi byc po dacie rozpoczecia.')
+      alert('Data zakończenia musi być po dacie rozpoczęcia.')
       return
+    }
+
+    // Delete existing slots for this event's disciplines first
+    for (const ed of evDiscs) {
+      await supabase.from('event_discipline_slots').delete().eq('event_discipline_id', ed.id)
     }
 
     const slotsToInsert: { event_discipline_id: string; start_time: string; end_time: string; max_participants: number }[] = []
@@ -404,13 +430,13 @@ export default function AdminPage() {
     for (const ed of evDiscs) {
       let current = new Date(startDate)
       while (current < endDate) {
-        const slotEnd = new Date(current.getTime() + 60 * 60 * 1000) // 1 hour
+        const slotEnd = new Date(current.getTime() + 60 * 60 * 1000)
         const actualEnd = slotEnd > endDate ? endDate : slotEnd
         slotsToInsert.push({
           event_discipline_id: ed.id,
           start_time: current.toISOString(),
           end_time: actualEnd.toISOString(),
-          max_participants: ev.stations_count ?? 10,
+          max_participants: ev.stations_count!,
         })
         current = slotEnd
       }
@@ -1080,6 +1106,7 @@ export default function AdminPage() {
                   <th className="text-left px-4 py-3">Nazwa</th>
                   <th className="text-left px-4 py-3">Opis</th>
                   <th className="text-left px-4 py-3">Typ tarczy</th>
+                  <th className="text-right px-4 py-3">Cena</th>
                   <th className="text-right px-4 py-3 w-24">Akcje</th>
                 </tr>
               </thead>
@@ -1089,6 +1116,7 @@ export default function AdminPage() {
                     <td className="px-4 py-3 font-medium text-sm">{d.name}</td>
                     <td className="px-4 py-3 text-sm text-muted">{d.description ?? '-'}</td>
                     <td className="px-4 py-3 text-sm text-muted">{d.target_type ?? '-'}</td>
+                    <td className="px-4 py-3 text-right text-sm">{Number(d.default_price_pln).toFixed(0)} zł</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button onClick={() => openEditDiscipline(d)} className="p-1.5 text-muted hover:text-primary rounded hover:bg-card-hover">
@@ -1131,6 +1159,11 @@ export default function AdminPage() {
                       <option value="benchrest">Benchrest</option>
                       <option value="other">Inne</option>
                     </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Domyślna cena (zł)</label>
+                    <input type="number" step="0.01" min="0" value={disciplineForm.default_price_pln} onChange={e => setDisciplineForm(f => ({ ...f, default_price_pln: e.target.value }))} className={inputClass} placeholder="0" />
+                    <p className="text-xs text-muted mt-1">Automatycznie wypełni cenę przy dodawaniu do wydarzenia.</p>
                   </div>
 
                   {error && <p className="text-sm text-danger">{error}</p>}
