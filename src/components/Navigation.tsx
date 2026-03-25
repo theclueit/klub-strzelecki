@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Target, Calendar, Trophy, Users, Crosshair, UserPlus, LogIn, LogOut, Menu, X } from 'lucide-react'
+import { Target, Calendar, Trophy, Users, Crosshair, UserPlus, LogIn, LogOut, Shield, Menu, X } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '@/components/AuthProvider'
 
@@ -22,6 +22,9 @@ export default function Navigation() {
     ...publicLinks,
     ...(member?.role === 'judge' || member?.role === 'admin'
       ? [{ href: '/sedzia', label: 'Panel sędziego', icon: Crosshair }]
+      : []),
+    ...(member?.role === 'admin'
+      ? [{ href: '/admin', label: 'Admin', icon: Shield }]
       : []),
   ]
 
