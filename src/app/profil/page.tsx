@@ -22,6 +22,8 @@ export default function ProfilePage() {
     is_range_officer: false,
     has_weapons_permit: false,
     is_sports_instructor: false,
+    range_officer_number: '',
+    shooting_patent_number: '',
   })
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -42,6 +44,8 @@ export default function ProfilePage() {
         is_range_officer: member.is_range_officer,
         has_weapons_permit: member.has_weapons_permit,
         is_sports_instructor: member.is_sports_instructor,
+        range_officer_number: member.range_officer_number ?? '',
+        shooting_patent_number: member.shooting_patent_number ?? '',
       })
     }
   }, [member, loading, user])
@@ -64,6 +68,8 @@ export default function ProfilePage() {
         is_range_officer: form.is_range_officer,
         has_weapons_permit: form.has_weapons_permit,
         is_sports_instructor: form.is_sports_instructor,
+        range_officer_number: form.range_officer_number || null,
+        shooting_patent_number: form.shooting_patent_number || null,
       })
       .eq('id', member.id)
 
@@ -149,10 +155,21 @@ export default function ProfilePage() {
               <input type="checkbox" checked={form.is_range_officer} onChange={e => setForm(f => ({ ...f, is_range_officer: e.target.checked }))} className="w-4 h-4 accent-primary" />
               <span className="text-sm">Prowadzący strzelanie</span>
             </label>
+            {form.is_range_officer && (
+              <div className="ml-6">
+                <label className="text-xs text-muted block mb-1">Numer prowadzącego strzelanie</label>
+                <input type="text" value={form.range_officer_number} onChange={e => setForm(f => ({ ...f, range_officer_number: e.target.value }))} placeholder="np. PS-2024-001" className={inputClass} />
+              </div>
+            )}
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={form.is_sports_instructor} onChange={e => setForm(f => ({ ...f, is_sports_instructor: e.target.checked }))} className="w-4 h-4 accent-primary" />
               <span className="text-sm">Instruktor strzelectwa sportowego</span>
             </label>
+          </div>
+
+          <div className="pt-2 border-t border-border">
+            <label className="text-sm text-muted block mb-1">Numer patentu strzeleckiego</label>
+            <input type="text" value={form.shooting_patent_number} onChange={e => setForm(f => ({ ...f, shooting_patent_number: e.target.value }))} placeholder="np. PAT-2024-001" className={inputClass} />
           </div>
 
           {error && (

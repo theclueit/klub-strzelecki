@@ -2,13 +2,14 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Target, Calendar, Trophy, Users, Crosshair, UserPlus, LogIn, LogOut, Shield, Menu, X, Settings } from 'lucide-react'
+import { Target, Calendar, Trophy, Users, Crosshair, UserPlus, LogIn, LogOut, Shield, Menu, X, Award } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '@/components/AuthProvider'
 
 const publicLinks = [
   { href: '/', label: 'O klubie', icon: Target },
   { href: '/kalendarz', label: 'Kalendarz', icon: Calendar },
+  { href: '/wyniki', label: 'Wyniki', icon: Award },
   { href: '/rankingi', label: 'Rankingi', icon: Trophy },
   { href: '/zawodnicy', label: 'Zawodnicy', icon: Users },
 ]

@@ -16,6 +16,8 @@ export interface Member {
   has_weapons_permit: boolean
   is_sports_instructor: boolean
   club_name: string
+  range_officer_number: string | null
+  shooting_patent_number: string | null
 }
 
 export interface Discipline {
