@@ -206,63 +206,73 @@ export default function AdminPage() {
     setSaving(true)
     setError('')
 
-    const payload = {
-      title: eventForm.title,
-      description: eventForm.description || null,
-      event_type: eventForm.event_type,
-      discipline_id: null,
-      start_date: new Date(eventForm.start_date).toISOString(),
-      end_date: eventForm.end_date ? new Date(eventForm.end_date).toISOString() : null,
-      location: eventForm.location || null,
-      address: eventForm.address || null,
-      stations_count: eventForm.stations_count ? parseInt(eventForm.stations_count) : null,
-      max_participants: eventForm.max_participants ? parseInt(eventForm.max_participants) : null,
-      price_pln: 0,
-      is_published: eventForm.is_published,
-    }
+    try {
+      const payload = {
+        title: eventForm.title,
+        description: eventForm.description || null,
+        event_type: eventForm.event_type,
+        discipline_id: null,
+        start_date: new Date(eventForm.start_date).toISOString(),
+        end_date: eventForm.end_date ? new Date(eventForm.end_date).toISOString() : null,
+        location: eventForm.location || null,
+        address: eventForm.address || null,
+        stations_count: eventForm.stations_count ? parseInt(eventForm.stations_count) : null,
+        max_participants: eventForm.max_participants ? parseInt(eventForm.max_participants) : null,
+        price_pln: 0,
+        is_published: eventForm.is_published,
+      }
 
-    let eventId: string
-    if (editingEvent) {
-      const { error: err } = await supabase.from('events').update(payload).eq('id', editingEvent.id)
-      if (err) { setError(err.message); setSaving(false); return }
-      eventId = editingEvent.id
-    } else {
-      const { data, error: err } = await supabase.from('events').insert(payload).select('id').single()
-      if (err || !data) { setError(err?.message ?? 'Blad tworzenia wydarzenia'); setSaving(false); return }
-      eventId = data.id
-    }
+      let eventId: string
+      if (editingEvent) {
+        const { error: err } = await supabase.from('events').update(payload).eq('id', editingEvent.id)
+        if (err) { setError(err.message); setSaving(false); return }
+        eventId = editingEvent.id
+      } else {
+        const { data, error: err } = await supabase.from('events').insert(payload).select('id').single()
+        if (err || !data) { setError(err?.message ?? 'Blad tworzenia wydarzenia'); setSaving(false); return }
+        eventId = data.id
+      }
 
-    // Sync event_disciplines: delete old, insert new
-    await supabase.from('event_disciplines').delete().eq('event_id', eventId)
+      // Sync event_disciplines: delete old, insert new
+      const { error: delErr } = await supabase.from('event_disciplines').delete().eq('event_id', eventId)
+      if (delErr) { setError('Blad usuwania dyscyplin: ' + delErr.message); setSaving(false); loadAll(); return }
 
-    if (editingEventDisciplines.length > 0) {
-      const rows = editingEventDisciplines.map(d => ({
-        event_id: eventId,
-        discipline_id: d.discipline_id,
-        price_pln: parseFloat(d.price_pln) || 0,
-      }))
-      const { error: edErr } = await supabase.from('event_disciplines').insert(rows)
-      if (edErr) { setError('Wydarzenie zapisane, ale blad dyscyplin: ' + edErr.message); setSaving(false); loadAll(); return }
-    }
+      if (editingEventDisciplines.length > 0) {
+        const rows = editingEventDisciplines.map(d => ({
+          event_id: eventId,
+          discipline_id: d.discipline_id,
+          price_pln: parseFloat(d.price_pln) || 0,
+        }))
+        const { error: edErr } = await supabase.from('event_disciplines').insert(rows)
+        if (edErr) { setError('Wydarzenie zapisane, ale blad dyscyplin: ' + edErr.message); setSaving(false); loadAll(); return }
+      }
 
-    // If event just got published, notify all unnotified judges
-    const wasPublished = editingEvent ? !editingEvent.is_published && eventForm.is_published : false
-    if (wasPublished || (!editingEvent && eventForm.is_published)) {
-      const { data: ejRows } = await supabase
-        .from('event_judges')
-        .select('id')
-        .eq('event_id', eventId)
-        .is('notified_at', null)
-      if (ejRows) {
-        for (const ej of ejRows) {
-          notifyJudge(ej.id)
+      // If event just got published, notify all unnotified judges (best-effort)
+      const wasPublished = editingEvent ? !editingEvent.is_published && eventForm.is_published : false
+      if (wasPublished || (!editingEvent && eventForm.is_published)) {
+        try {
+          const { data: ejRows } = await supabase
+            .from('event_judges')
+            .select('id')
+            .eq('event_id', eventId)
+            .is('notified_at', null)
+          if (ejRows) {
+            for (const ej of ejRows) {
+              notifyJudge(ej.id)
+            }
+          }
+        } catch {
+          // Notification failure shouldn't block save
         }
       }
-    }
 
-    setSaving(false)
-    setShowEventForm(false)
-    loadAll()
+      setSaving(false)
+      setShowEventForm(false)
+      loadAll()
+    } catch (err: any) {
+      setError('Blad zapisu: ' + (err?.message ?? 'Nieznany blad'))
+      setSaving(false)
+    }
   }
 
   async function deleteEvent(id: string) {
