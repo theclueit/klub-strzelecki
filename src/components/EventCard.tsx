@@ -14,6 +14,13 @@ const typeLabels: Record<string, { label: string; color: string }> = {
   other: { label: 'Inne', color: 'bg-muted/20 text-muted' },
 }
 
+interface EventDisc {
+  id: string
+  discipline_id: string
+  price_pln: number
+  discipline?: { name: string } | null
+}
+
 interface EventCardProps {
   event: {
     id: string
@@ -28,11 +35,12 @@ interface EventCardProps {
     discipline?: { name: string } | null
   }
   regCount: number
+  eventDisciplines: EventDisc[]
 }
 
 type RegMode = null | 'choose' | 'member' | 'guest'
 
-export default function EventCard({ event, regCount }: EventCardProps) {
+export default function EventCard({ event, regCount, eventDisciplines }: EventCardProps) {
   const { member } = useAuth()
   const supabase = createSupabaseBrowser()
 
@@ -42,6 +50,9 @@ export default function EventCard({ event, regCount }: EventCardProps) {
   const [cancelling, setCancelling] = useState(false)
   const [error, setError] = useState('')
   const [count, setCount] = useState(regCount)
+
+  // Selected disciplines for registration
+  const [selectedDiscs, setSelectedDiscs] = useState<Set<string>>(new Set())
 
   // Guest form
   const [guestForm, setGuestForm] = useState({
@@ -53,13 +64,30 @@ export default function EventCard({ event, regCount }: EventCardProps) {
   const isFull = event.max_participants ? count >= event.max_participants : false
   const fillPercent = event.max_participants ? Math.min((count / event.max_participants) * 100, 100) : 0
 
+  const selectedTotal = eventDisciplines
+    .filter(ed => selectedDiscs.has(ed.id))
+    .reduce((sum, ed) => sum + Number(ed.price_pln), 0)
+
+  function toggleDisc(edId: string) {
+    setSelectedDiscs(prev => {
+      const next = new Set(prev)
+      if (next.has(edId)) next.delete(edId)
+      else next.add(edId)
+      return next
+    })
+  }
+
   function openRegistration() {
     setError('')
+    // Pre-select all disciplines if there's only one
+    if (eventDisciplines.length === 1) {
+      setSelectedDiscs(new Set([eventDisciplines[0].id]))
+    } else {
+      setSelectedDiscs(new Set())
+    }
     if (member) {
-      // Logged in member goes directly to confirm
       setMode('member')
     } else {
-      // Not logged in — choose path
       setMode('choose')
     }
   }
@@ -67,18 +95,21 @@ export default function EventCard({ event, regCount }: EventCardProps) {
   // Member registration
   async function handleMemberRegister() {
     if (!member) return
+    if (eventDisciplines.length > 0 && selectedDiscs.size === 0) {
+      setError('Wybierz co najmniej jedną dyscyplinę.')
+      return
+    }
     setRegistering(true)
     setError('')
 
-    const { error: dbError } = await supabase.from('event_registrations').insert({
+    const { data: regData, error: dbError } = await supabase.from('event_registrations').insert({
       event_id: event.id,
       member_id: member.id,
       status: 'registered',
-    })
-
-    setRegistering(false)
+    }).select('id').single()
 
     if (dbError) {
+      setRegistering(false)
       if (dbError.code === '23505') {
         setError('Jesteś już zapisany na to wydarzenie.')
         setRegistered(true)
@@ -88,6 +119,16 @@ export default function EventCard({ event, regCount }: EventCardProps) {
       return
     }
 
+    // Save selected disciplines
+    if (selectedDiscs.size > 0 && regData) {
+      const rows = Array.from(selectedDiscs).map(edId => ({
+        event_discipline_id: edId,
+        member_registration_id: regData.id,
+      }))
+      await supabase.from('registration_disciplines').insert(rows)
+    }
+
+    setRegistering(false)
     setRegistered(true)
     setCount(prev => prev + 1)
     setMode(null)
@@ -115,10 +156,14 @@ export default function EventCard({ event, regCount }: EventCardProps) {
   // Guest registration
   async function handleGuestRegister(e: React.FormEvent) {
     e.preventDefault()
+    if (eventDisciplines.length > 0 && selectedDiscs.size === 0) {
+      setError('Wybierz co najmniej jedną dyscyplinę / opcję.')
+      return
+    }
     setRegistering(true)
     setError('')
 
-    const { error: dbError } = await supabase.from('guest_registrations').insert({
+    const { data: regData, error: dbError } = await supabase.from('guest_registrations').insert({
       event_id: event.id,
       full_name: guestForm.full_name,
       email: guestForm.email,
@@ -127,11 +172,10 @@ export default function EventCard({ event, regCount }: EventCardProps) {
       has_license: guestForm.has_license,
       license_number: guestForm.has_license && guestForm.license_number ? guestForm.license_number : null,
       message: guestForm.message || null,
-    })
-
-    setRegistering(false)
+    }).select('id').single()
 
     if (dbError) {
+      setRegistering(false)
       if (dbError.code === '23505') {
         setError('Ten email jest już zapisany na to wydarzenie.')
       } else {
@@ -140,6 +184,16 @@ export default function EventCard({ event, regCount }: EventCardProps) {
       return
     }
 
+    // Save selected disciplines
+    if (selectedDiscs.size > 0 && regData) {
+      const rows = Array.from(selectedDiscs).map(edId => ({
+        event_discipline_id: edId,
+        guest_registration_id: regData.id,
+      }))
+      await supabase.from('registration_disciplines').insert(rows)
+    }
+
+    setRegistering(false)
     setRegistered(true)
     setCount(prev => prev + 1)
     setMode(null)
@@ -148,10 +202,56 @@ export default function EventCard({ event, regCount }: EventCardProps) {
   function closeForm() {
     setMode(null)
     setError('')
+    setSelectedDiscs(new Set())
     setGuestForm({ full_name: '', email: '', phone: '', experience: '', has_license: false, license_number: '', message: '' })
   }
 
   const inputClass = "w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
+
+  // Discipline picker component used in both member and guest flows
+  function DisciplinePicker() {
+    if (eventDisciplines.length === 0) return null
+    return (
+      <div className="mb-3">
+        <p className="text-sm font-medium mb-2">Wybierz dyscypliny / opcje:</p>
+        <div className="space-y-1.5">
+          {eventDisciplines.map(ed => {
+            const isSelected = selectedDiscs.has(ed.id)
+            return (
+              <button
+                key={ed.id}
+                type="button"
+                onClick={() => toggleDisc(ed.id)}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border text-sm transition-colors text-left ${
+                  isSelected
+                    ? 'border-primary bg-primary/10 text-foreground'
+                    : 'border-border hover:border-primary/30 text-muted hover:text-foreground'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
+                    isSelected ? 'bg-primary border-primary' : 'border-border'
+                  }`}>
+                    {isSelected && <Check className="w-3 h-3 text-background" />}
+                  </div>
+                  <span className={isSelected ? 'font-medium' : ''}>{ed.discipline?.name ?? 'Dyscyplina'}</span>
+                </div>
+                {Number(ed.price_pln) > 0 && (
+                  <span className="text-xs font-semibold ml-2 flex-shrink-0">{Number(ed.price_pln).toFixed(0)} zł</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+        {selectedDiscs.size > 0 && (
+          <div className="flex items-center justify-between mt-2 px-1">
+            <span className="text-xs text-muted">Wybrano: {selectedDiscs.size} {selectedDiscs.size === 1 ? 'pozycja' : selectedDiscs.size < 5 ? 'pozycje' : 'pozycji'}</span>
+            <span className="text-sm font-semibold text-primary">{selectedTotal.toFixed(0)} zł</span>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="bg-card border border-border rounded-xl p-6 hover:border-primary/30 transition-colors">
@@ -168,11 +268,17 @@ export default function EventCard({ event, regCount }: EventCardProps) {
 
         {/* Info */}
         <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${type.color}`}>
               {type.label}
             </span>
-            {event.discipline?.name && (
+            {eventDisciplines.map(ed => (
+              <span key={ed.id} className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400">
+                {ed.discipline?.name}
+              </span>
+            ))}
+            {/* Fallback for old events with single discipline */}
+            {eventDisciplines.length === 0 && event.discipline?.name && (
               <span className="text-xs text-muted">{event.discipline.name}</span>
             )}
           </div>
@@ -192,7 +298,17 @@ export default function EventCard({ event, regCount }: EventCardProps) {
                 {event.location}
               </span>
             )}
-            {event.price_pln > 0 && (
+            {eventDisciplines.length > 0 && (
+              <span className="flex items-center gap-1">
+                <Tag className="w-4 h-4" />
+                {eventDisciplines.length === 1
+                  ? `${Number(eventDisciplines[0].price_pln).toFixed(0)} zł`
+                  : `od ${Math.min(...eventDisciplines.map(d => Number(d.price_pln))).toFixed(0)} zł`
+                }
+              </span>
+            )}
+            {/* Fallback for old events */}
+            {eventDisciplines.length === 0 && event.price_pln > 0 && (
               <span className="flex items-center gap-1">
                 <Tag className="w-4 h-4" />
                 {Number(event.price_pln).toFixed(0)} zł
@@ -271,7 +387,12 @@ export default function EventCard({ event, regCount }: EventCardProps) {
               </div>
             </a>
             <button
-              onClick={() => setMode('guest')}
+              onClick={() => {
+                if (eventDisciplines.length === 1) {
+                  setSelectedDiscs(new Set([eventDisciplines[0].id]))
+                }
+                setMode('guest')
+              }}
               className="flex items-center gap-3 p-4 border border-border rounded-xl hover:border-primary/30 transition-colors text-left group"
             >
               <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center flex-shrink-0">
@@ -301,11 +422,9 @@ export default function EventCard({ event, regCount }: EventCardProps) {
               <div className="text-xs text-muted">{member?.license_number ?? member?.email}</div>
             </div>
           </div>
-          {event.price_pln > 0 && (
-            <p className="text-sm text-muted mb-3">
-              Opłata za udział: <span className="font-semibold text-foreground">{Number(event.price_pln).toFixed(0)} zł</span>
-            </p>
-          )}
+
+          <DisciplinePicker />
+
           {error && (
             <div className="bg-danger/10 border border-danger/30 rounded-lg p-2 mb-3">
               <p className="text-xs text-danger">{error}</p>
@@ -317,7 +436,7 @@ export default function EventCard({ event, regCount }: EventCardProps) {
               disabled={registering}
               className="flex-1 text-sm px-4 py-2 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50"
             >
-              {registering ? 'Zapisuję...' : 'Potwierdź zapis'}
+              {registering ? 'Zapisuję...' : selectedTotal > 0 ? `Potwierdź zapis · ${selectedTotal.toFixed(0)} zł` : 'Potwierdź zapis'}
             </button>
             <button onClick={closeForm} className="text-sm px-4 py-2 border border-border rounded-lg hover:bg-card-hover transition-colors">
               Anuluj
@@ -334,6 +453,8 @@ export default function EventCard({ event, regCount }: EventCardProps) {
             <h4 className="font-semibold text-sm">Zgłoszenie osoby z zewnątrz</h4>
           </div>
           <form onSubmit={handleGuestRegister} className="space-y-3">
+            <DisciplinePicker />
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-muted block mb-1">Imię i nazwisko *</label>
@@ -425,9 +546,9 @@ export default function EventCard({ event, regCount }: EventCardProps) {
               />
             </div>
 
-            {event.price_pln > 0 && (
+            {selectedTotal > 0 && (
               <p className="text-xs text-muted">
-                Opłata za udział: <span className="font-semibold text-foreground">{Number(event.price_pln).toFixed(0)} zł</span> — szczegóły płatności zostaną przesłane na email.
+                Do zapłaty: <span className="font-semibold text-foreground">{selectedTotal.toFixed(0)} zł</span> — szczegóły płatności zostaną przesłane na email.
               </p>
             )}
 
@@ -443,7 +564,7 @@ export default function EventCard({ event, regCount }: EventCardProps) {
                 disabled={registering}
                 className="flex-1 text-sm px-4 py-2 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50"
               >
-                {registering ? 'Wysyłanie...' : 'Wyślij zgłoszenie'}
+                {registering ? 'Wysyłanie...' : selectedTotal > 0 ? `Wyślij zgłoszenie · ${selectedTotal.toFixed(0)} zł` : 'Wyślij zgłoszenie'}
               </button>
               <button type="button" onClick={closeForm} className="text-sm px-4 py-2 border border-border rounded-lg hover:bg-card-hover transition-colors">
                 Anuluj

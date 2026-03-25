@@ -5,7 +5,7 @@ import EventCard from '@/components/EventCard'
 export const revalidate = 60
 
 export default async function CalendarPage() {
-  const [eventsRes, memberRegsRes, guestRegsRes] = await Promise.all([
+  const [eventsRes, memberRegsRes, guestRegsRes, eventDiscsRes] = await Promise.all([
     supabase
       .from('events')
       .select('*, discipline:disciplines(name)')
@@ -18,9 +18,17 @@ export default async function CalendarPage() {
       .from('guest_registrations')
       .select('event_id')
       .neq('status', 'cancelled'),
+    supabase
+      .from('event_disciplines')
+      .select('*, discipline:disciplines(name)')
+      .order('price_pln'),
   ])
 
   const events = eventsRes.data ?? []
+  const allEventDiscs = (eventDiscsRes.data ?? []) as {
+    id: string; event_id: string; discipline_id: string; price_pln: number;
+    discipline?: { name: string } | null
+  }[]
 
   // Count both member and guest registrations per event
   const regCounts: Record<string, number> = {}
@@ -47,6 +55,7 @@ export default async function CalendarPage() {
               key={event.id}
               event={event}
               regCount={regCounts[event.id] ?? 0}
+              eventDisciplines={allEventDiscs.filter(ed => ed.event_id === event.id)}
             />
           ))}
         </div>

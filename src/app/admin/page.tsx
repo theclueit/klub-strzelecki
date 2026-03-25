@@ -3,9 +3,9 @@
 import { useState, useEffect } from 'react'
 import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
-import { Shield, Calendar, Target, Users, Plus, Trash2, Pencil, Save, X, UserPlus, ChevronDown, ChevronUp, ClipboardList, Check, Ban } from 'lucide-react'
+import { Shield, Calendar, Target, Users, Plus, Trash2, Pencil, Save, X, UserPlus, ChevronDown, ChevronUp, ClipboardList, Check, Ban, Tag } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import type { Discipline, Member } from '@/types/database'
+import type { Discipline, Member, EventDiscipline } from '@/types/database'
 
 interface EventRow {
   id: string
@@ -41,6 +41,13 @@ interface GuestReg {
   status: string
 }
 
+interface RegDiscipline {
+  id: string
+  event_discipline_id: string
+  member_registration_id: string | null
+  guest_registration_id: string | null
+}
+
 type Tab = 'events' | 'disciplines' | 'judges' | 'registrations'
 
 export default function AdminPage() {
@@ -56,6 +63,8 @@ export default function AdminPage() {
   const [allMembers, setAllMembers] = useState<Member[]>([])
   const [guestRegs, setGuestRegs] = useState<GuestReg[]>([])
   const [memberRegs, setMemberRegs] = useState<{ id: string; event_id: string; member_id: string; registered_at: string; status: string; member?: Member }[]>([])
+  const [eventDisciplines, setEventDisciplines] = useState<(EventDiscipline & { discipline?: Discipline })[]>([])
+  const [regDisciplines, setRegDisciplines] = useState<RegDiscipline[]>([])
 
   // Modals
   const [showEventForm, setShowEventForm] = useState(false)
@@ -67,12 +76,15 @@ export default function AdminPage() {
   // Form states
   const [eventForm, setEventForm] = useState({
     title: '', description: '', event_type: 'competition' as string,
-    discipline_id: '', start_date: '', end_date: '', location: '',
-    max_participants: '', price_pln: '0', is_published: true,
+    start_date: '', end_date: '', location: '',
+    max_participants: '', is_published: true,
   })
   const [disciplineForm, setDisciplineForm] = useState({
     name: '', description: '', target_type: '' as string,
   })
+  // Event disciplines management
+  const [editingEventDisciplines, setEditingEventDisciplines] = useState<{ discipline_id: string; price_pln: string }[]>([])
+
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -85,7 +97,7 @@ export default function AdminPage() {
   }, [member, loading])
 
   async function loadAll() {
-    const [evRes, discRes, judgesRes, ejRes, membersRes, guestRes, memberRegsRes] = await Promise.all([
+    const [evRes, discRes, judgesRes, ejRes, membersRes, guestRes, memberRegsRes, edRes, rdRes] = await Promise.all([
       supabase.from('events').select('*').order('start_date', { ascending: false }),
       supabase.from('disciplines').select('*').order('name'),
       supabase.from('members').select('*').in('role', ['judge', 'admin']).order('full_name'),
@@ -93,6 +105,8 @@ export default function AdminPage() {
       supabase.from('members').select('*').eq('is_active', true).order('full_name'),
       supabase.from('guest_registrations').select('*').order('registered_at', { ascending: false }),
       supabase.from('event_registrations').select('*, member:members(full_name, email, license_number)').order('registered_at', { ascending: false }),
+      supabase.from('event_disciplines').select('*, discipline:disciplines(*)').order('price_pln'),
+      supabase.from('registration_disciplines').select('*'),
     ])
     setEvents((evRes.data ?? []) as EventRow[])
     setDisciplines((discRes.data ?? []) as Discipline[])
@@ -101,16 +115,23 @@ export default function AdminPage() {
     setAllMembers((membersRes.data ?? []) as Member[])
     setGuestRegs((guestRes.data ?? []) as GuestReg[])
     setMemberRegs((memberRegsRes.data ?? []) as any[])
+    setEventDisciplines((edRes.data ?? []) as any[])
+    setRegDisciplines((rdRes.data ?? []) as RegDiscipline[])
   }
 
   // ---- EVENTS ----
+  function getEventDiscs(eventId: string) {
+    return eventDisciplines.filter(ed => ed.event_id === eventId)
+  }
+
   function openNewEvent() {
     setEditingEvent(null)
     setEventForm({
       title: '', description: '', event_type: 'competition',
-      discipline_id: disciplines[0]?.id ?? '', start_date: '', end_date: '',
-      location: 'Strzelnica klubowa', max_participants: '30', price_pln: '0', is_published: true,
+      start_date: '', end_date: '',
+      location: 'Strzelnica klubowa', max_participants: '30', is_published: true,
     })
+    setEditingEventDisciplines([])
     setShowEventForm(true)
     setError('')
   }
@@ -121,16 +142,36 @@ export default function AdminPage() {
       title: ev.title,
       description: ev.description ?? '',
       event_type: ev.event_type,
-      discipline_id: ev.discipline_id ?? '',
       start_date: ev.start_date ? new Date(ev.start_date).toISOString().slice(0, 16) : '',
       end_date: ev.end_date ? new Date(ev.end_date).toISOString().slice(0, 16) : '',
       location: ev.location ?? '',
       max_participants: ev.max_participants?.toString() ?? '',
-      price_pln: ev.price_pln?.toString() ?? '0',
       is_published: ev.is_published,
     })
+    // Load existing event disciplines into form
+    const existing = getEventDiscs(ev.id)
+    setEditingEventDisciplines(existing.map(ed => ({
+      discipline_id: ed.discipline_id,
+      price_pln: ed.price_pln.toString(),
+    })))
     setShowEventForm(true)
     setError('')
+  }
+
+  function addDisciplineToEvent() {
+    // Find first discipline not yet added
+    const used = new Set(editingEventDisciplines.map(d => d.discipline_id))
+    const available = disciplines.filter(d => !used.has(d.id))
+    if (available.length === 0) return
+    setEditingEventDisciplines(prev => [...prev, { discipline_id: available[0].id, price_pln: '0' }])
+  }
+
+  function removeDisciplineFromEvent(index: number) {
+    setEditingEventDisciplines(prev => prev.filter((_, i) => i !== index))
+  }
+
+  function updateEventDiscipline(index: number, field: 'discipline_id' | 'price_pln', value: string) {
+    setEditingEventDisciplines(prev => prev.map((d, i) => i === index ? { ...d, [field]: value } : d))
   }
 
   async function saveEvent(e: React.FormEvent) {
@@ -142,24 +183,55 @@ export default function AdminPage() {
       title: eventForm.title,
       description: eventForm.description || null,
       event_type: eventForm.event_type,
-      discipline_id: eventForm.discipline_id || null,
+      discipline_id: null,
       start_date: new Date(eventForm.start_date).toISOString(),
       end_date: eventForm.end_date ? new Date(eventForm.end_date).toISOString() : null,
       location: eventForm.location || null,
       max_participants: eventForm.max_participants ? parseInt(eventForm.max_participants) : null,
-      price_pln: parseFloat(eventForm.price_pln) || 0,
+      price_pln: 0,
       is_published: eventForm.is_published,
     }
 
-    let err
+    let eventId: string
     if (editingEvent) {
-      ({ error: err } = await supabase.from('events').update(payload).eq('id', editingEvent.id))
+      const { error: err } = await supabase.from('events').update(payload).eq('id', editingEvent.id)
+      if (err) { setError(err.message); setSaving(false); return }
+      eventId = editingEvent.id
     } else {
-      ({ error: err } = await supabase.from('events').insert(payload))
+      const { data, error: err } = await supabase.from('events').insert(payload).select('id').single()
+      if (err || !data) { setError(err?.message ?? 'Błąd tworzenia wydarzenia'); setSaving(false); return }
+      eventId = data.id
+    }
+
+    // Sync event_disciplines: delete old, insert new
+    await supabase.from('event_disciplines').delete().eq('event_id', eventId)
+
+    if (editingEventDisciplines.length > 0) {
+      const rows = editingEventDisciplines.map(d => ({
+        event_id: eventId,
+        discipline_id: d.discipline_id,
+        price_pln: parseFloat(d.price_pln) || 0,
+      }))
+      const { error: edErr } = await supabase.from('event_disciplines').insert(rows)
+      if (edErr) { setError('Wydarzenie zapisane, ale błąd dyscyplin: ' + edErr.message); setSaving(false); loadAll(); return }
+    }
+
+    // If event just got published, notify all unnotified judges
+    const wasPublished = editingEvent ? !editingEvent.is_published && eventForm.is_published : false
+    if (wasPublished || (!editingEvent && eventForm.is_published)) {
+      const { data: ejRows } = await supabase
+        .from('event_judges')
+        .select('id')
+        .eq('event_id', eventId)
+        .is('notified_at', null)
+      if (ejRows) {
+        for (const ej of ejRows) {
+          notifyJudge(ej.id)
+        }
+      }
     }
 
     setSaving(false)
-    if (err) { setError(err.message); return }
     setShowEventForm(false)
     loadAll()
   }
@@ -221,8 +293,25 @@ export default function AdminPage() {
   }
 
   // ---- JUDGES ASSIGNMENT ----
+  async function notifyJudge(eventJudgeId: string) {
+    try {
+      await fetch('/api/judge-notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event_judge_id: eventJudgeId }),
+      })
+    } catch {
+      // Notification is best-effort; don't block the UI
+    }
+  }
+
   async function assignJudge(eventId: string, judgeId: string) {
-    await supabase.from('event_judges').insert({ event_id: eventId, judge_id: judgeId })
+    const { data } = await supabase.from('event_judges').insert({ event_id: eventId, judge_id: judgeId }).select('id').single()
+    // If event is published, send email notification immediately
+    const ev = events.find(e => e.id === eventId)
+    if (data && ev?.is_published) {
+      notifyJudge(data.id)
+    }
     loadAll()
   }
 
@@ -248,6 +337,27 @@ export default function AdminPage() {
     return judges.filter(j => !assigned.has(j.id))
   }
 
+  // ---- HELPERS for registrations tab ----
+  function getRegDisciplineNames(regId: string, type: 'member' | 'guest') {
+    const rds = regDisciplines.filter(rd =>
+      type === 'member' ? rd.member_registration_id === regId : rd.guest_registration_id === regId
+    )
+    return rds.map(rd => {
+      const ed = eventDisciplines.find(e => e.id === rd.event_discipline_id)
+      return ed?.discipline?.name ?? '?'
+    })
+  }
+
+  function getRegTotal(regId: string, type: 'member' | 'guest') {
+    const rds = regDisciplines.filter(rd =>
+      type === 'member' ? rd.member_registration_id === regId : rd.guest_registration_id === regId
+    )
+    return rds.reduce((sum, rd) => {
+      const ed = eventDisciplines.find(e => e.id === rd.event_discipline_id)
+      return sum + (ed ? Number(ed.price_pln) : 0)
+    }, 0)
+  }
+
   if (loading) return <div className="p-8 text-center text-muted">Ładowanie...</div>
   if (!member || member.role !== 'admin') return null
 
@@ -265,7 +375,7 @@ export default function AdminPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 mb-8 border-b border-border">
+      <div className="flex gap-2 mb-8 border-b border-border overflow-x-auto">
         {[
           { key: 'events' as Tab, label: 'Zawody / Wydarzenia', icon: Calendar },
           { key: 'disciplines' as Tab, label: 'Dyscypliny', icon: Target },
@@ -275,7 +385,7 @@ export default function AdminPage() {
           <button
             key={key}
             onClick={() => setTab(key)}
-            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px ${
+            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px whitespace-nowrap ${
               tab === key
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted hover:text-foreground'
@@ -300,26 +410,32 @@ export default function AdminPage() {
 
           <div className="space-y-3">
             {events.map(ev => {
-              const disc = disciplines.find(d => d.id === ev.discipline_id)
+              const evDiscs = getEventDiscs(ev.id)
               const assigned = getEventJudges(ev.id)
               const available = getAvailableJudges(ev.id)
               const isExpanded = expandedEvent === ev.id
+              const totalPrice = evDiscs.reduce((s, d) => s + Number(d.price_pln), 0)
 
               return (
                 <div key={ev.id} className="bg-card border border-border rounded-xl">
                   <div className="p-4 flex items-center gap-4">
                     <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary font-medium">
                           {eventTypeLabels[ev.event_type]}
                         </span>
-                        {disc && <span className="text-xs text-muted">{disc.name}</span>}
+                        {evDiscs.map(ed => (
+                          <span key={ed.id} className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 font-medium">
+                            {ed.discipline?.name} — {Number(ed.price_pln).toFixed(0)} zł
+                          </span>
+                        ))}
                         {!ev.is_published && <span className="text-xs px-2 py-0.5 rounded-full bg-warning/20 text-warning">Ukryte</span>}
                       </div>
                       <h3 className="font-semibold">{ev.title}</h3>
                       <p className="text-xs text-muted">
                         {new Date(ev.start_date).toLocaleDateString('pl')} &middot; {ev.location}
-                        {ev.price_pln > 0 && ` · ${ev.price_pln} zł`}
+                        {evDiscs.length > 0 && ` · ${evDiscs.length} dyscyplin`}
+                        {totalPrice > 0 && ` · suma: ${totalPrice.toFixed(0)} zł`}
                         {ev.max_participants && ` · max ${ev.max_participants} os.`}
                       </p>
                       {assigned.length > 0 && (
@@ -408,11 +524,8 @@ export default function AdminPage() {
                       </select>
                     </div>
                     <div>
-                      <label className="text-xs text-muted block mb-1">Dyscyplina</label>
-                      <select value={eventForm.discipline_id} onChange={e => setEventForm(f => ({ ...f, discipline_id: e.target.value }))} className={inputClass}>
-                        <option value="">Brak</option>
-                        {disciplines.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                      </select>
+                      <label className="text-xs text-muted block mb-1">Max uczestników</label>
+                      <input type="number" value={eventForm.max_participants} onChange={e => setEventForm(f => ({ ...f, max_participants: e.target.value }))} className={inputClass} />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
@@ -429,16 +542,75 @@ export default function AdminPage() {
                     <label className="text-xs text-muted block mb-1">Lokalizacja</label>
                     <input value={eventForm.location} onChange={e => setEventForm(f => ({ ...f, location: e.target.value }))} className={inputClass} />
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs text-muted block mb-1">Max uczestników</label>
-                      <input type="number" value={eventForm.max_participants} onChange={e => setEventForm(f => ({ ...f, max_participants: e.target.value }))} className={inputClass} />
+
+                  {/* ---- Disciplines with prices ---- */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-sm font-medium flex items-center gap-1">
+                        <Target className="w-4 h-4 text-primary" />
+                        Dyscypliny i ceny
+                      </label>
+                      <button
+                        type="button"
+                        onClick={addDisciplineToEvent}
+                        disabled={editingEventDisciplines.length >= disciplines.length}
+                        className="flex items-center gap-1 text-xs px-2 py-1 text-primary hover:bg-primary/10 rounded transition-colors disabled:opacity-30"
+                      >
+                        <Plus className="w-3 h-3" />
+                        Dodaj dyscyplinę
+                      </button>
                     </div>
-                    <div>
-                      <label className="text-xs text-muted block mb-1">Cena (zł)</label>
-                      <input type="number" step="0.01" value={eventForm.price_pln} onChange={e => setEventForm(f => ({ ...f, price_pln: e.target.value }))} className={inputClass} />
-                    </div>
+
+                    {editingEventDisciplines.length === 0 ? (
+                      <p className="text-xs text-muted py-2">Brak dyscyplin. Dodaj dyscyplinę, aby ustawić cenę startu.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {editingEventDisciplines.map((ed, idx) => {
+                          const usedIds = editingEventDisciplines.filter((_, i) => i !== idx).map(d => d.discipline_id)
+                          return (
+                            <div key={idx} className="flex items-center gap-2">
+                              <select
+                                value={ed.discipline_id}
+                                onChange={e => updateEventDiscipline(idx, 'discipline_id', e.target.value)}
+                                className={inputClass + ' flex-1'}
+                              >
+                                {disciplines.filter(d => !usedIds.includes(d.id) || d.id === ed.discipline_id).map(d => (
+                                  <option key={d.id} value={d.id}>{d.name}</option>
+                                ))}
+                              </select>
+                              <div className="relative w-28 flex-shrink-0">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={ed.price_pln}
+                                  onChange={e => updateEventDiscipline(idx, 'price_pln', e.target.value)}
+                                  className={inputClass + ' pr-8'}
+                                  placeholder="0"
+                                />
+                                <span className="absolute right-3 top-2.5 text-xs text-muted">zł</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeDisciplineFromEvent(idx)}
+                                className="p-2 text-muted hover:text-danger rounded hover:bg-card-hover flex-shrink-0"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          )
+                        })}
+                        {editingEventDisciplines.length > 1 && (
+                          <p className="text-xs text-muted text-right">
+                            Suma za wszystkie dyscypliny: <span className="font-semibold text-foreground">
+                              {editingEventDisciplines.reduce((s, d) => s + (parseFloat(d.price_pln) || 0), 0).toFixed(0)} zł
+                            </span>
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
+
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={eventForm.is_published} onChange={e => setEventForm(f => ({ ...f, is_published: e.target.checked }))} className="w-4 h-4 accent-primary" />
                     <span className="text-sm">Opublikowane (widoczne w kalendarzu)</span>
@@ -614,6 +786,7 @@ export default function AdminPage() {
           </div>
         </div>
       )}
+
       {/* ============ REGISTRATIONS TAB ============ */}
       {tab === 'registrations' && (
         <div>
@@ -642,75 +815,83 @@ export default function AdminPage() {
                       <tr className="border-b border-border text-xs text-muted">
                         <th className="text-left px-4 py-2">Typ</th>
                         <th className="text-left px-4 py-2">Nazwisko</th>
-                        <th className="text-left px-4 py-2">Email</th>
-                        <th className="text-left px-4 py-2">Telefon</th>
+                        <th className="text-left px-4 py-2">Dyscypliny</th>
+                        <th className="text-left px-4 py-2">Kwota</th>
                         <th className="text-left px-4 py-2">Status</th>
                         <th className="text-right px-4 py-2">Akcje</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {evMemberRegs.map(r => (
-                        <tr key={r.id} className="border-b border-border/50 hover:bg-card-hover text-sm">
-                          <td className="px-4 py-2">
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary font-medium">Członek</span>
-                          </td>
-                          <td className="px-4 py-2 font-medium">{(r.member as any)?.full_name ?? '-'}</td>
-                          <td className="px-4 py-2 text-muted">{(r.member as any)?.email}</td>
-                          <td className="px-4 py-2 text-muted">-</td>
-                          <td className="px-4 py-2">
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-success/20 text-success">{r.status}</span>
-                          </td>
-                          <td className="px-4 py-2 text-right">-</td>
-                        </tr>
-                      ))}
-                      {evGuestRegs.map(r => (
-                        <tr key={r.id} className="border-b border-border/50 hover:bg-card-hover text-sm">
-                          <td className="px-4 py-2">
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 font-medium">Gość</span>
-                          </td>
-                          <td className="px-4 py-2 font-medium">
-                            {r.full_name}
-                            {r.has_license && <span className="text-xs text-muted ml-1">(lic: {r.license_number})</span>}
-                          </td>
-                          <td className="px-4 py-2 text-muted">{r.email}</td>
-                          <td className="px-4 py-2 text-muted">{r.phone ?? '-'}</td>
-                          <td className="px-4 py-2">
-                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                              r.status === 'confirmed' ? 'bg-success/20 text-success' :
-                              r.status === 'cancelled' ? 'bg-danger/20 text-danger' :
-                              'bg-warning/20 text-warning'
-                            }`}>{r.status === 'pending' ? 'oczekuje' : r.status === 'confirmed' ? 'potwierdzony' : 'anulowany'}</span>
-                          </td>
-                          <td className="px-4 py-2 text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              {r.status === 'pending' && (
-                                <>
+                      {evMemberRegs.map(r => {
+                        const discNames = getRegDisciplineNames(r.id, 'member')
+                        const total = getRegTotal(r.id, 'member')
+                        return (
+                          <tr key={r.id} className="border-b border-border/50 hover:bg-card-hover text-sm">
+                            <td className="px-4 py-2">
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary font-medium">Członek</span>
+                            </td>
+                            <td className="px-4 py-2 font-medium">{(r.member as any)?.full_name ?? '-'}</td>
+                            <td className="px-4 py-2 text-muted text-xs">{discNames.length > 0 ? discNames.join(', ') : '-'}</td>
+                            <td className="px-4 py-2 text-muted">{total > 0 ? `${total.toFixed(0)} zł` : '-'}</td>
+                            <td className="px-4 py-2">
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-success/20 text-success">{r.status}</span>
+                            </td>
+                            <td className="px-4 py-2 text-right">-</td>
+                          </tr>
+                        )
+                      })}
+                      {evGuestRegs.map(r => {
+                        const discNames = getRegDisciplineNames(r.id, 'guest')
+                        const total = getRegTotal(r.id, 'guest')
+                        return (
+                          <tr key={r.id} className="border-b border-border/50 hover:bg-card-hover text-sm">
+                            <td className="px-4 py-2">
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 font-medium">Gość</span>
+                            </td>
+                            <td className="px-4 py-2 font-medium">
+                              {r.full_name}
+                              {r.has_license && <span className="text-xs text-muted ml-1">(lic: {r.license_number})</span>}
+                            </td>
+                            <td className="px-4 py-2 text-muted text-xs">{discNames.length > 0 ? discNames.join(', ') : '-'}</td>
+                            <td className="px-4 py-2 text-muted">{total > 0 ? `${total.toFixed(0)} zł` : '-'}</td>
+                            <td className="px-4 py-2">
+                              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                                r.status === 'confirmed' ? 'bg-success/20 text-success' :
+                                r.status === 'cancelled' ? 'bg-danger/20 text-danger' :
+                                'bg-warning/20 text-warning'
+                              }`}>{r.status === 'pending' ? 'oczekuje' : r.status === 'confirmed' ? 'potwierdzony' : 'anulowany'}</span>
+                            </td>
+                            <td className="px-4 py-2 text-right">
+                              <div className="flex items-center justify-end gap-1">
+                                {r.status === 'pending' && (
+                                  <>
+                                    <button
+                                      onClick={async () => { await supabase.from('guest_registrations').update({ status: 'confirmed' }).eq('id', r.id); loadAll() }}
+                                      className="p-1.5 text-muted hover:text-success rounded hover:bg-card-hover" title="Potwierdź"
+                                    >
+                                      <Check className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={async () => { await supabase.from('guest_registrations').update({ status: 'cancelled' }).eq('id', r.id); loadAll() }}
+                                      className="p-1.5 text-muted hover:text-danger rounded hover:bg-card-hover" title="Odrzuć"
+                                    >
+                                      <Ban className="w-3.5 h-3.5" />
+                                    </button>
+                                  </>
+                                )}
+                                {r.status !== 'pending' && (
                                   <button
-                                    onClick={async () => { await supabase.from('guest_registrations').update({ status: 'confirmed' }).eq('id', r.id); loadAll() }}
-                                    className="p-1.5 text-muted hover:text-success rounded hover:bg-card-hover" title="Potwierdź"
+                                    onClick={async () => { await supabase.from('guest_registrations').update({ status: 'pending' }).eq('id', r.id); loadAll() }}
+                                    className="p-1.5 text-xs text-muted hover:text-foreground rounded hover:bg-card-hover"
                                   >
-                                    <Check className="w-3.5 h-3.5" />
+                                    Cofnij
                                   </button>
-                                  <button
-                                    onClick={async () => { await supabase.from('guest_registrations').update({ status: 'cancelled' }).eq('id', r.id); loadAll() }}
-                                    className="p-1.5 text-muted hover:text-danger rounded hover:bg-card-hover" title="Odrzuć"
-                                  >
-                                    <Ban className="w-3.5 h-3.5" />
-                                  </button>
-                                </>
-                              )}
-                              {r.status !== 'pending' && (
-                                <button
-                                  onClick={async () => { await supabase.from('guest_registrations').update({ status: 'pending' }).eq('id', r.id); loadAll() }}
-                                  className="p-1.5 text-xs text-muted hover:text-foreground rounded hover:bg-card-hover"
-                                >
-                                  Cofnij
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
