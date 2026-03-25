@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import { User, Trophy, Target, ArrowLeft } from 'lucide-react'
+import { User, Trophy, Target, ArrowLeft, Shield, Crosshair, Award } from 'lucide-react'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { pl } from 'date-fns/locale'
@@ -37,6 +37,25 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
     ? Math.round((results?.reduce((sum, r) => sum + r.total_score, 0) ?? 0) / totalShots)
     : 0
 
+  // Group results by discipline for license summary
+  const discStats: Record<string, { name: string; count: number; best: number; avg: number }> = {}
+  results?.forEach((r: any) => {
+    const dName = r.discipline?.name ?? 'Inne'
+    if (!discStats[dName]) discStats[dName] = { name: dName, count: 0, best: 0, avg: 0 }
+    discStats[dName].count++
+    discStats[dName].best = Math.max(discStats[dName].best, r.total_score)
+    discStats[dName].avg += r.total_score
+  })
+  Object.values(discStats).forEach(d => { d.avg = d.count > 0 ? Math.round(d.avg / d.count) : 0 })
+
+  const badges: { label: string; color: string }[] = []
+  if (member.role === 'judge' || member.role === 'admin') {
+    badges.push({ label: member.judge_class ? `Sędzia ${member.judge_class}` : 'Sędzia', color: 'bg-primary/20 text-primary' })
+  }
+  if (member.is_range_officer) badges.push({ label: 'Prowadzący strzelanie', color: 'bg-blue-500/20 text-blue-400' })
+  if (member.has_weapons_permit) badges.push({ label: 'Pozwolenie na broń', color: 'bg-success/20 text-success' })
+  if (member.is_sports_instructor) badges.push({ label: 'Instruktor strzelectwa', color: 'bg-yellow-500/20 text-yellow-400' })
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-12">
       <Link href="/zawodnicy" className="inline-flex items-center gap-2 text-muted hover:text-foreground mb-6 transition-colors">
@@ -52,12 +71,22 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
           </div>
           <div>
             <h1 className="text-3xl font-bold mb-1">{member.full_name}</h1>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <span className={`text-sm px-3 py-1 rounded-full font-medium ${classColors[member.class]}`}>
                 Klasa {member.class}
               </span>
               <span className="text-sm text-muted">{member.license_number}</span>
+              <span className="text-sm text-muted">{member.club_name}</span>
             </div>
+            {badges.length > 0 && (
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
+                {badges.map(b => (
+                  <span key={b.label} className={`text-xs px-2 py-0.5 rounded-full font-medium ${b.color}`}>
+                    {b.label}
+                  </span>
+                ))}
+              </div>
+            )}
             <p className="text-sm text-muted mt-2">
               Członek od {format(new Date(member.joined_at), 'd MMMM yyyy', { locale: pl })}
             </p>
@@ -83,6 +112,41 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
           <div className="text-xs text-muted">Średnia</div>
         </div>
       </div>
+
+      {/* License renewal summary */}
+      {Object.keys(discStats).length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
+            <Award className="w-5 h-5 text-primary" />
+            Podsumowanie do licencji
+          </h2>
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border text-sm text-muted">
+                  <th className="text-left px-6 py-3">Dyscyplina</th>
+                  <th className="text-right px-6 py-3">Starty</th>
+                  <th className="text-right px-6 py-3">Najlepszy</th>
+                  <th className="text-right px-6 py-3">Średnia</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.values(discStats).map(d => (
+                  <tr key={d.name} className="border-b border-border/50 hover:bg-card-hover">
+                    <td className="px-6 py-3 font-medium text-sm">{d.name}</td>
+                    <td className="px-6 py-3 text-right text-sm">{d.count}</td>
+                    <td className="px-6 py-3 text-right font-mono font-bold">{d.best}</td>
+                    <td className="px-6 py-3 text-right font-mono text-muted">{d.avg}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-muted mt-2 px-1">
+            Łączna liczba startów: {totalShots} | Sezon: {new Date().getFullYear()}
+          </p>
+        </div>
+      )}
 
       {/* Results history */}
       <h2 className="text-xl font-semibold mb-4">Historia strzelań</h2>

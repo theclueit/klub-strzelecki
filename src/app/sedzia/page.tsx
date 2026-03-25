@@ -1,21 +1,38 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+import { createSupabaseBrowser } from '@/lib/supabase'
 import { Crosshair, Camera, Upload, Check, LogIn, LogOut, Search, User } from 'lucide-react'
 import type { Member, Discipline } from '@/types/database'
 
-type Step = 'login' | 'scan' | 'photo' | 'review' | 'done'
+type Step = 'login' | 'select-event' | 'scan' | 'photo' | 'review' | 'done'
+
+interface AssignedEvent {
+  id: string
+  event_id: string
+  event: { id: string; title: string; start_date: string; end_date: string | null }
+}
+
+interface EventDisciplineRow {
+  id: string
+  discipline_id: string
+  discipline: { id: string; name: string } | null
+}
 
 export default function JudgePage() {
+  const supabase = createSupabaseBrowser()
   const [step, setStep] = useState<Step>('login')
   const [judge, setJudge] = useState<Member | null>(null)
   const [pin, setPin] = useState('')
   const [loginError, setLoginError] = useState('')
 
+  // Assigned events
+  const [assignedEvents, setAssignedEvents] = useState<AssignedEvent[]>([])
+  const [selectedEventId, setSelectedEventId] = useState<string>('')
+
   // Members & disciplines
   const [members, setMembers] = useState<Member[]>([])
-  const [disciplines, setDisciplines] = useState<Discipline[]>([])
+  const [eventDisciplines, setEventDisciplines] = useState<EventDisciplineRow[]>([])
   const [selectedMember, setSelectedMember] = useState<Member | null>(null)
   const [selectedDiscipline, setSelectedDiscipline] = useState<string>('')
   const [memberSearch, setMemberSearch] = useState('')
@@ -32,27 +49,10 @@ export default function JudgePage() {
   const [comment, setComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  useEffect(() => {
-    if (step !== 'login') {
-      loadData()
-    }
-  }, [step])
-
-  async function loadData() {
-    const [membersRes, discRes] = await Promise.all([
-      supabase.from('members').select('*').eq('is_active', true).order('full_name'),
-      supabase.from('disciplines').select('*').order('name'),
-    ])
-    setMembers(membersRes.data ?? [])
-    setDisciplines(discRes.data ?? [])
-    if (discRes.data?.length) setSelectedDiscipline(discRes.data[0].id)
-  }
-
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
     setLoginError('')
 
-    // Simple PIN auth: license_number acts as PIN for judges/admins
     const { data, error } = await supabase
       .from('members')
       .select('*')
@@ -65,14 +65,48 @@ export default function JudgePage() {
       return
     }
 
-    setJudge(data)
+    setJudge(data as Member)
+
+    // Load assigned events for this judge (only current/future, confirmed or pending)
+    const now = new Date().toISOString()
+    const { data: ejData } = await supabase
+      .from('event_judges')
+      .select('id, event_id, event:events!event_id(id, title, start_date, end_date)')
+      .eq('judge_id', data.id)
+      .in('status', ['pending', 'confirmed'])
+
+    // Filter to events that haven't ended
+    const relevant = ((ejData ?? []) as any[]).filter(ej => {
+      const ev = ej.event
+      if (!ev) return false
+      const endDate = ev.end_date || ev.start_date
+      return new Date(endDate) >= new Date(new Date().toDateString())
+    })
+
+    setAssignedEvents(relevant)
+    setStep('select-event')
+  }
+
+  async function selectEvent(eventId: string) {
+    setSelectedEventId(eventId)
+
+    // Load members and event disciplines
+    const [membersRes, edRes] = await Promise.all([
+      supabase.from('members').select('*').eq('is_active', true).order('full_name'),
+      supabase.from('event_disciplines').select('id, discipline_id, discipline:disciplines(id, name)').eq('event_id', eventId),
+    ])
+    setMembers((membersRes.data ?? []) as Member[])
+    const eds = (edRes.data ?? []) as unknown as EventDisciplineRow[]
+    setEventDisciplines(eds)
+    if (eds.length > 0 && eds[0].discipline) {
+      setSelectedDiscipline(eds[0].discipline.id)
+    }
     setStep('scan')
   }
 
   function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-
     const reader = new FileReader()
     reader.onload = (ev) => {
       setPhoto(ev.target?.result as string)
@@ -84,10 +118,8 @@ export default function JudgePage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!selectedMember || !totalScore) return
-
     setSubmitting(true)
 
-    // Upload photo if exists
     let targetImageUrl: string | null = null
     if (photo) {
       const fileName = `targets/${selectedMember.id}/${Date.now()}.jpg`
@@ -113,6 +145,7 @@ export default function JudgePage() {
     const { error } = await supabase.from('results').insert({
       member_id: selectedMember.id,
       judge_id: judge!.id,
+      event_id: selectedEventId || null,
       discipline_id: selectedDiscipline || null,
       total_score: parseInt(totalScore),
       max_score: parseInt(maxScore) || null,
@@ -123,12 +156,10 @@ export default function JudgePage() {
     })
 
     setSubmitting(false)
-
     if (error) {
       alert('Błąd zapisu: ' + error.message)
       return
     }
-
     setStep('done')
   }
 
@@ -150,6 +181,8 @@ export default function JudgePage() {
     m.qr_code?.toLowerCase().includes(memberSearch.toLowerCase())
   )
 
+  const inputClass = "w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
+
   // LOGIN
   if (step === 'login') {
     return (
@@ -166,7 +199,7 @@ export default function JudgePage() {
               value={pin}
               onChange={e => setPin(e.target.value)}
               placeholder="Numer licencji (np. PL-2024-001)"
-              className="w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
+              className={inputClass}
             />
             {loginError && <p className="text-sm text-danger">{loginError}</p>}
             <button
@@ -177,26 +210,79 @@ export default function JudgePage() {
               Zaloguj
             </button>
           </form>
-          <p className="text-xs text-muted mt-4 text-center">
-            Demo: PL-2024-001 (admin) lub PL-2024-002 (sędzia)
-          </p>
         </div>
+      </div>
+    )
+  }
+
+  // SELECT EVENT
+  if (step === 'select-event') {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-12">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold">Wybierz zawody</h1>
+            <p className="text-sm text-muted">Zalogowany: {judge?.full_name}</p>
+          </div>
+          <button onClick={() => { setJudge(null); setStep('login') }} className="text-muted hover:text-foreground transition-colors">
+            <LogOut className="w-5 h-5" />
+          </button>
+        </div>
+
+        {assignedEvents.length === 0 ? (
+          <div className="bg-card border border-border rounded-xl p-8 text-center">
+            <p className="text-muted mb-2">Nie masz przypisanych aktualnych zawodów.</p>
+            <p className="text-sm text-muted">Skontaktuj się z administratorem, aby zostać przypisanym do wydarzenia.</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {assignedEvents.map(ej => {
+              const ev = ej.event as any
+              const isToday = new Date(ev.start_date).toDateString() === new Date().toDateString()
+              return (
+                <button
+                  key={ej.id}
+                  onClick={() => selectEvent(ev.id)}
+                  className="w-full bg-card border border-border rounded-xl p-5 hover:border-primary/30 transition-colors text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    {isToday && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-success/20 text-success font-medium">Dziś</span>
+                    )}
+                    <div>
+                      <div className="font-semibold">{ev.title}</div>
+                      <div className="text-sm text-muted">
+                        {new Date(ev.start_date).toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
     )
   }
 
   // SELECT MEMBER
   if (step === 'scan') {
+    const selectedEventTitle = assignedEvents.find(e => (e.event as any).id === selectedEventId)?.event?.title
     return (
       <div className="max-w-2xl mx-auto px-4 py-12">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">Wybierz zawodnika</h1>
-            <p className="text-sm text-muted">Zalogowany: {judge?.full_name}</p>
+            <p className="text-sm text-muted">{judge?.full_name} &middot; {selectedEventTitle}</p>
           </div>
-          <button onClick={() => { setJudge(null); setStep('login') }} className="text-muted hover:text-foreground transition-colors">
-            <LogOut className="w-5 h-5" />
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => setStep('select-event')} className="text-sm text-muted hover:text-foreground transition-colors px-3 py-1 border border-border rounded-lg">
+              Zmień zawody
+            </button>
+            <button onClick={() => { setJudge(null); setStep('login') }} className="text-muted hover:text-foreground transition-colors">
+              <LogOut className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="relative mb-4">
@@ -222,7 +308,7 @@ export default function JudgePage() {
               </div>
               <div>
                 <div className="font-medium">{m.full_name}</div>
-                <div className="text-xs text-muted">{m.license_number} &middot; QR: {m.qr_code}</div>
+                <div className="text-xs text-muted">{m.license_number} &middot; {m.club_name}</div>
               </div>
             </button>
           ))}
@@ -242,33 +328,17 @@ export default function JudgePage() {
 
           <h3 className="text-lg font-semibold mb-4">Zdjęcie tarczy (opcjonalne)</h3>
 
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={handlePhotoChange}
-            className="hidden"
-          />
+          <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhotoChange} className="hidden" />
 
           <div className="space-y-3">
-            <button
-              onClick={() => fileRef.current?.click()}
-              className="w-full bg-primary text-background font-semibold py-3 rounded-lg hover:bg-primary-dark transition-colors flex items-center justify-center gap-2"
-            >
+            <button onClick={() => fileRef.current?.click()} className="w-full bg-primary text-background font-semibold py-3 rounded-lg hover:bg-primary-dark transition-colors flex items-center justify-center gap-2">
               <Camera className="w-5 h-5" />
               Zrób zdjęcie tarczy
             </button>
-            <button
-              onClick={() => setStep('review')}
-              className="w-full border border-border text-foreground font-semibold py-3 rounded-lg hover:bg-card-hover transition-colors"
-            >
+            <button onClick={() => setStep('review')} className="w-full border border-border text-foreground font-semibold py-3 rounded-lg hover:bg-card-hover transition-colors">
               Pomiń — wpisz wynik ręcznie
             </button>
-            <button
-              onClick={() => { setSelectedMember(null); setStep('scan') }}
-              className="text-sm text-muted hover:text-foreground transition-colors"
-            >
+            <button onClick={() => { setSelectedMember(null); setStep('scan') }} className="text-sm text-muted hover:text-foreground transition-colors">
               Zmień zawodnika
             </button>
           </div>
@@ -297,10 +367,10 @@ export default function JudgePage() {
               <select
                 value={selectedDiscipline}
                 onChange={e => setSelectedDiscipline(e.target.value)}
-                className="w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground focus:outline-none focus:border-primary"
+                className={inputClass}
               >
-                {disciplines.map(d => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
+                {eventDisciplines.map(ed => (
+                  <option key={ed.id} value={ed.discipline?.id ?? ed.discipline_id}>{ed.discipline?.name ?? 'Dyscyplina'}</option>
                 ))}
               </select>
             </div>
@@ -308,57 +378,28 @@ export default function JudgePage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-sm text-muted block mb-1">Wynik *</label>
-                <input
-                  type="number"
-                  value={totalScore}
-                  onChange={e => setTotalScore(e.target.value)}
-                  placeholder="np. 95"
-                  required
-                  className="w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
-                />
+                <input type="number" value={totalScore} onChange={e => setTotalScore(e.target.value)} placeholder="np. 95" required className={inputClass} />
               </div>
               <div>
                 <label className="text-sm text-muted block mb-1">Max punktów</label>
-                <input
-                  type="number"
-                  value={maxScore}
-                  onChange={e => setMaxScore(e.target.value)}
-                  className="w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
-                />
+                <input type="number" value={maxScore} onChange={e => setMaxScore(e.target.value)} className={inputClass} />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-sm text-muted block mb-1">Dziesiątki</label>
-                <input
-                  type="number"
-                  value={tensCount}
-                  onChange={e => setTensCount(e.target.value)}
-                  placeholder="0"
-                  className="w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
-                />
+                <input type="number" value={tensCount} onChange={e => setTensCount(e.target.value)} placeholder="0" className={inputClass} />
               </div>
               <div>
                 <label className="text-sm text-muted block mb-1">Pudła</label>
-                <input
-                  type="number"
-                  value={misses}
-                  onChange={e => setMisses(e.target.value)}
-                  className="w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
-                />
+                <input type="number" value={misses} onChange={e => setMisses(e.target.value)} className={inputClass} />
               </div>
             </div>
 
             <div>
               <label className="text-sm text-muted block mb-1">Komentarz sędziego</label>
-              <textarea
-                value={comment}
-                onChange={e => setComment(e.target.value)}
-                rows={3}
-                placeholder="Uwagi do strzelania..."
-                className="w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary resize-none"
-              />
+              <textarea value={comment} onChange={e => setComment(e.target.value)} rows={3} placeholder="Uwagi do strzelania..." className={inputClass + ' resize-none'} />
             </div>
 
             <button
@@ -391,10 +432,7 @@ export default function JudgePage() {
           {selectedMember?.full_name} — <span className="font-mono font-bold text-foreground">{totalScore}</span> pkt
         </p>
         <p className="text-sm text-muted mb-6">Wynik jest widoczny w profilu zawodnika i w rankingach.</p>
-        <button
-          onClick={reset}
-          className="w-full bg-primary text-background font-semibold py-3 rounded-lg hover:bg-primary-dark transition-colors"
-        >
+        <button onClick={reset} className="w-full bg-primary text-background font-semibold py-3 rounded-lg hover:bg-primary-dark transition-colors">
           Kolejny zawodnik
         </button>
       </div>

@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
-import { MapPin, Users, Clock, Tag, UserPlus, Check, X, User, Mail, Phone } from 'lucide-react'
+import { MapPin, Users, Clock, Tag, UserPlus, Check, X, User, Mail, Phone, ExternalLink } from 'lucide-react'
 import { format } from 'date-fns'
 import { pl } from 'date-fns/locale'
 
@@ -21,6 +21,15 @@ interface EventDisc {
   discipline?: { name: string } | null
 }
 
+interface EventSlot {
+  id: string
+  event_discipline_id: string
+  start_time: string
+  end_time: string
+  max_participants: number
+  current_count: number
+}
+
 interface EventCardProps {
   event: {
     id: string
@@ -30,17 +39,19 @@ interface EventCardProps {
     start_date: string
     end_date: string | null
     location: string | null
+    address: string | null
     max_participants: number | null
     price_pln: number
     discipline?: { name: string } | null
   }
   regCount: number
   eventDisciplines: EventDisc[]
+  slots?: EventSlot[]
 }
 
 type RegMode = null | 'choose' | 'member' | 'guest'
 
-export default function EventCard({ event, regCount, eventDisciplines }: EventCardProps) {
+export default function EventCard({ event, regCount, eventDisciplines, slots = [] }: EventCardProps) {
   const { member } = useAuth()
   const supabase = createSupabaseBrowser()
 
@@ -53,6 +64,9 @@ export default function EventCard({ event, regCount, eventDisciplines }: EventCa
 
   // Selected disciplines for registration
   const [selectedDiscs, setSelectedDiscs] = useState<Set<string>>(new Set())
+
+  // Selected slots: event_discipline_id -> slot_id
+  const [selectedSlots, setSelectedSlots] = useState<Map<string, string>>(new Map())
 
   // Guest form
   const [guestForm, setGuestForm] = useState({
@@ -68,11 +82,48 @@ export default function EventCard({ event, regCount, eventDisciplines }: EventCa
     .filter(ed => selectedDiscs.has(ed.id))
     .reduce((sum, ed) => sum + Number(ed.price_pln), 0)
 
+  // Get slots for a specific event_discipline_id
+  function getSlotsForDiscipline(edId: string): EventSlot[] {
+    return slots.filter(s => s.event_discipline_id === edId)
+  }
+
+  // Check if a discipline has slots that require selection
+  function disciplineHasSlots(edId: string): boolean {
+    return getSlotsForDiscipline(edId).length > 0
+  }
+
+  // Check if all selected disciplines that have slots also have a slot selected
+  function allSlotsSelected(): boolean {
+    for (const edId of selectedDiscs) {
+      if (disciplineHasSlots(edId) && !selectedSlots.has(edId)) {
+        return false
+      }
+    }
+    return true
+  }
+
   function toggleDisc(edId: string) {
     setSelectedDiscs(prev => {
       const next = new Set(prev)
-      if (next.has(edId)) next.delete(edId)
-      else next.add(edId)
+      if (next.has(edId)) {
+        next.delete(edId)
+        // Also remove any selected slot for this discipline
+        setSelectedSlots(prevSlots => {
+          const nextSlots = new Map(prevSlots)
+          nextSlots.delete(edId)
+          return nextSlots
+        })
+      } else {
+        next.add(edId)
+      }
+      return next
+    })
+  }
+
+  function selectSlot(edId: string, slotId: string) {
+    setSelectedSlots(prev => {
+      const next = new Map(prev)
+      next.set(edId, slotId)
       return next
     })
   }
@@ -85,6 +136,7 @@ export default function EventCard({ event, regCount, eventDisciplines }: EventCa
     } else {
       setSelectedDiscs(new Set())
     }
+    setSelectedSlots(new Map())
     if (member) {
       setMode('member')
     } else {
@@ -97,6 +149,10 @@ export default function EventCard({ event, regCount, eventDisciplines }: EventCa
     if (!member) return
     if (eventDisciplines.length > 0 && selectedDiscs.size === 0) {
       setError('Wybierz co najmniej jedną dyscyplinę.')
+      return
+    }
+    if (!allSlotsSelected()) {
+      setError('Wybierz termin dla każdej wybranej dyscypliny.')
       return
     }
     setRegistering(true)
@@ -119,11 +175,12 @@ export default function EventCard({ event, regCount, eventDisciplines }: EventCa
       return
     }
 
-    // Save selected disciplines
+    // Save selected disciplines with slot IDs
     if (selectedDiscs.size > 0 && regData) {
       const rows = Array.from(selectedDiscs).map(edId => ({
         event_discipline_id: edId,
         member_registration_id: regData.id,
+        ...(selectedSlots.has(edId) ? { event_discipline_slot_id: selectedSlots.get(edId) } : {}),
       }))
       await supabase.from('registration_disciplines').insert(rows)
     }
@@ -160,6 +217,10 @@ export default function EventCard({ event, regCount, eventDisciplines }: EventCa
       setError('Wybierz co najmniej jedną dyscyplinę / opcję.')
       return
     }
+    if (!allSlotsSelected()) {
+      setError('Wybierz termin dla każdej wybranej dyscypliny.')
+      return
+    }
     setRegistering(true)
     setError('')
 
@@ -184,11 +245,12 @@ export default function EventCard({ event, regCount, eventDisciplines }: EventCa
       return
     }
 
-    // Save selected disciplines
+    // Save selected disciplines with slot IDs
     if (selectedDiscs.size > 0 && regData) {
       const rows = Array.from(selectedDiscs).map(edId => ({
         event_discipline_id: edId,
         guest_registration_id: regData.id,
+        ...(selectedSlots.has(edId) ? { event_discipline_slot_id: selectedSlots.get(edId) } : {}),
       }))
       await supabase.from('registration_disciplines').insert(rows)
     }
@@ -203,10 +265,60 @@ export default function EventCard({ event, regCount, eventDisciplines }: EventCa
     setMode(null)
     setError('')
     setSelectedDiscs(new Set())
+    setSelectedSlots(new Map())
     setGuestForm({ full_name: '', email: '', phone: '', experience: '', has_license: false, license_number: '', message: '' })
   }
 
   const inputClass = "w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
+
+  // Slot picker for a discipline
+  function SlotPicker({ edId }: { edId: string }) {
+    const discSlots = getSlotsForDiscipline(edId)
+    if (discSlots.length === 0) return null
+
+    const currentSelected = selectedSlots.get(edId)
+
+    return (
+      <div className="ml-6 mt-2 mb-1 space-y-1">
+        <p className="text-xs text-muted mb-1.5">Wybierz termin:</p>
+        {discSlots.map(slot => {
+          const isFull = slot.current_count >= slot.max_participants
+          const isSelected = currentSelected === slot.id
+          const startFormatted = format(new Date(slot.start_time), 'HH:mm')
+          const endFormatted = format(new Date(slot.end_time), 'HH:mm')
+
+          return (
+            <button
+              key={slot.id}
+              type="button"
+              disabled={isFull}
+              onClick={() => selectSlot(edId, slot.id)}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-sm transition-colors text-left ${
+                isFull
+                  ? 'border-border bg-background/50 text-muted/50 cursor-not-allowed opacity-50'
+                  : isSelected
+                    ? 'border-primary bg-primary/10 text-foreground'
+                    : 'border-border hover:border-primary/30 text-muted hover:text-foreground'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center flex-shrink-0 ${
+                  isSelected ? 'bg-primary border-primary' : 'border-border'
+                }`}>
+                  {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-background" />}
+                </div>
+                <Clock className="w-3.5 h-3.5 flex-shrink-0" />
+                <span className={isSelected ? 'font-medium' : ''}>{startFormatted} - {endFormatted}</span>
+              </div>
+              <span className={`text-xs flex-shrink-0 ${isFull ? 'text-danger/50' : isSelected ? 'text-primary' : ''}`}>
+                {slot.current_count}/{slot.max_participants} miejsc
+              </span>
+            </button>
+          )
+        })}
+      </div>
+    )
+  }
 
   // Discipline picker component used in both member and guest flows
   function DisciplinePicker() {
@@ -218,28 +330,30 @@ export default function EventCard({ event, regCount, eventDisciplines }: EventCa
           {eventDisciplines.map(ed => {
             const isSelected = selectedDiscs.has(ed.id)
             return (
-              <button
-                key={ed.id}
-                type="button"
-                onClick={() => toggleDisc(ed.id)}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border text-sm transition-colors text-left ${
-                  isSelected
-                    ? 'border-primary bg-primary/10 text-foreground'
-                    : 'border-border hover:border-primary/30 text-muted hover:text-foreground'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
-                    isSelected ? 'bg-primary border-primary' : 'border-border'
-                  }`}>
-                    {isSelected && <Check className="w-3 h-3 text-background" />}
+              <div key={ed.id}>
+                <button
+                  type="button"
+                  onClick={() => toggleDisc(ed.id)}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border text-sm transition-colors text-left ${
+                    isSelected
+                      ? 'border-primary bg-primary/10 text-foreground'
+                      : 'border-border hover:border-primary/30 text-muted hover:text-foreground'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
+                      isSelected ? 'bg-primary border-primary' : 'border-border'
+                    }`}>
+                      {isSelected && <Check className="w-3 h-3 text-background" />}
+                    </div>
+                    <span className={isSelected ? 'font-medium' : ''}>{ed.discipline?.name ?? 'Dyscyplina'}</span>
                   </div>
-                  <span className={isSelected ? 'font-medium' : ''}>{ed.discipline?.name ?? 'Dyscyplina'}</span>
-                </div>
-                {Number(ed.price_pln) > 0 && (
-                  <span className="text-xs font-semibold ml-2 flex-shrink-0">{Number(ed.price_pln).toFixed(0)} zł</span>
-                )}
-              </button>
+                  {Number(ed.price_pln) > 0 && (
+                    <span className="text-xs font-semibold ml-2 flex-shrink-0">{Number(ed.price_pln).toFixed(0)} zł</span>
+                  )}
+                </button>
+                {isSelected && <SlotPicker edId={ed.id} />}
+              </div>
             )
           })}
         </div>
@@ -296,6 +410,17 @@ export default function EventCard({ event, regCount, eventDisciplines }: EventCa
               <span className="flex items-center gap-1">
                 <MapPin className="w-4 h-4" />
                 {event.location}
+                {event.address && (
+                  <a
+                    href={`https://maps.google.com/?q=${encodeURIComponent(event.address)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-0.5 text-primary hover:text-primary-dark transition-colors ml-1"
+                    title="Otwórz w Google Maps"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
               </span>
             )}
             {eventDisciplines.length > 0 && (

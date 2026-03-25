@@ -5,7 +5,7 @@ import EventCard from '@/components/EventCard'
 export const revalidate = 60
 
 export default async function CalendarPage() {
-  const [eventsRes, memberRegsRes, guestRegsRes, eventDiscsRes] = await Promise.all([
+  const [eventsRes, memberRegsRes, guestRegsRes, eventDiscsRes, slotsRes, regDiscsRes] = await Promise.all([
     supabase
       .from('events')
       .select('*, discipline:disciplines(name)')
@@ -22,6 +22,13 @@ export default async function CalendarPage() {
       .from('event_disciplines')
       .select('*, discipline:disciplines(name)')
       .order('price_pln'),
+    supabase
+      .from('event_discipline_slots')
+      .select('*')
+      .order('start_time'),
+    supabase
+      .from('registration_disciplines')
+      .select('event_discipline_slot_id'),
   ])
 
   const events = eventsRes.data ?? []
@@ -29,6 +36,18 @@ export default async function CalendarPage() {
     id: string; event_id: string; discipline_id: string; price_pln: number;
     discipline?: { name: string } | null
   }[]
+  const allSlots = (slotsRes.data ?? []) as {
+    id: string; event_discipline_id: string; start_time: string; end_time: string; max_participants: number
+  }[]
+  const allRegDiscs = (regDiscsRes.data ?? []) as { event_discipline_slot_id: string | null }[]
+
+  // Count registrations per slot
+  const slotCounts: Record<string, number> = {}
+  for (const rd of allRegDiscs) {
+    if (rd.event_discipline_slot_id) {
+      slotCounts[rd.event_discipline_slot_id] = (slotCounts[rd.event_discipline_slot_id] || 0) + 1
+    }
+  }
 
   // Count both member and guest registrations per event
   const regCounts: Record<string, number> = {}
@@ -50,14 +69,26 @@ export default async function CalendarPage() {
         <p className="text-muted">Brak nadchodzących wydarzeń.</p>
       ) : (
         <div className="space-y-4">
-          {events.map((event: any) => (
-            <EventCard
-              key={event.id}
-              event={event}
-              regCount={regCounts[event.id] ?? 0}
-              eventDisciplines={allEventDiscs.filter(ed => ed.event_id === event.id)}
-            />
-          ))}
+          {events.map((event: any) => {
+            const eventDiscs = allEventDiscs.filter(ed => ed.event_id === event.id)
+            const eventDiscIds = new Set(eventDiscs.map(ed => ed.id))
+            const eventSlots = allSlots
+              .filter(s => eventDiscIds.has(s.event_discipline_id))
+              .map(s => ({
+                ...s,
+                current_count: slotCounts[s.id] || 0,
+              }))
+
+            return (
+              <EventCard
+                key={event.id}
+                event={event}
+                regCount={regCounts[event.id] ?? 0}
+                eventDisciplines={eventDiscs}
+                slots={eventSlots}
+              />
+            )
+          })}
         </div>
       )}
     </div>

@@ -21,6 +21,7 @@ export default function JoinPage() {
     experience: '',
     has_license: false,
     license_number: '',
+    club_name: '',
     accepts_rules: false,
     accepts_legal: false,
   })
@@ -74,6 +75,8 @@ export default function JoinPage() {
       email: form.email,
       phone: form.phone || null,
       license_number: form.has_license && form.license_number ? form.license_number : null,
+      has_weapons_permit: form.has_license,
+      club_name: form.club_name || 'Klub Strzelecki Cel',
       class: 'III',
       role: 'member',
       qr_code: `QR-${Date.now()}`,
@@ -267,6 +270,19 @@ export default function JoinPage() {
                 className="w-full bg-background border border-border rounded-lg px-4 py-3 mt-2 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
               />
             )}
+          </div>
+
+          {/* Club */}
+          <div>
+            <label className="text-sm text-muted block mb-1">Klub strzelecki</label>
+            <input
+              type="text"
+              value={form.club_name}
+              onChange={e => update('club_name', e.target.value)}
+              placeholder="Klub Strzelecki Cel (domyślnie)"
+              className="w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
+            />
+            <p className="text-xs text-muted mt-1">Pozostaw puste, jeśli dołączasz do naszego klubu.</p>
           </div>
 
           {/* Consents */}

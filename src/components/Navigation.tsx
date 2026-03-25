@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Target, Calendar, Trophy, Users, Crosshair, UserPlus, LogIn, LogOut, Shield, Menu, X } from 'lucide-react'
+import { Target, Calendar, Trophy, Users, Crosshair, UserPlus, LogIn, LogOut, Shield, Menu, X, Settings } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '@/components/AuthProvider'
 
@@ -59,7 +59,7 @@ export default function Navigation() {
               member ? (
                 <div className="flex items-center gap-2 ml-2 pl-2 border-l border-border">
                   <Link
-                    href={`/zawodnicy/${member.id}`}
+                    href="/profil"
                     className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-muted hover:text-foreground hover:bg-card-hover transition-colors"
                   >
                     <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-primary text-xs font-bold">

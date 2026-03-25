@@ -11,6 +11,11 @@ export interface Member {
   is_active: boolean
   role: 'member' | 'judge' | 'admin'
   created_at: string
+  judge_class: string | null
+  is_range_officer: boolean
+  has_weapons_permit: boolean
+  is_sports_instructor: boolean
+  club_name: string
 }
 
 export interface Discipline {
@@ -29,6 +34,10 @@ export interface Event {
   start_date: string
   end_date: string | null
   location: string | null
+  address: string | null
+  latitude: number | null
+  longitude: number | null
+  stations_count: number | null
   max_participants: number | null
   price_pln: number
   is_published: boolean
@@ -93,11 +102,21 @@ export interface EventDiscipline {
   discipline?: Discipline
 }
 
+export interface EventDisciplineSlot {
+  id: string
+  event_discipline_id: string
+  start_time: string
+  end_time: string
+  max_participants: number
+  created_at: string
+}
+
 export interface RegistrationDiscipline {
   id: string
   event_discipline_id: string
   member_registration_id: string | null
   guest_registration_id: string | null
+  event_discipline_slot_id: string | null
   event_discipline?: EventDiscipline
 }
 
@@ -109,6 +128,7 @@ export interface Database {
       events: { Row: Event }
       event_registrations: { Row: EventRegistration }
       event_disciplines: { Row: EventDiscipline }
+      event_discipline_slots: { Row: EventDisciplineSlot }
       registration_disciplines: { Row: RegistrationDiscipline }
       results: { Row: Result }
       rankings: { Row: Ranking }
