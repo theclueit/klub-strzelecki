@@ -1,14 +1,21 @@
 'use client'
 
 import { useState } from 'react'
-import { supabase } from '@/lib/supabase'
-import { UserPlus, Check, ArrowLeft } from 'lucide-react'
+import { createSupabaseBrowser } from '@/lib/supabase'
+import { useAuth } from '@/components/AuthProvider'
+import { UserPlus, Check, ArrowLeft, Eye, EyeOff } from 'lucide-react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 
 export default function JoinPage() {
+  const { user } = useAuth()
+  const router = useRouter()
+  const supabase = createSupabaseBrowser()
+
   const [form, setForm] = useState({
     full_name: '',
     email: '',
+    password: '',
     phone: '',
     discipline: '',
     experience: '',
@@ -17,6 +24,7 @@ export default function JoinPage() {
     accepts_rules: false,
     accepts_legal: false,
   })
+  const [showPassword, setShowPassword] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
@@ -34,30 +42,75 @@ export default function JoinPage() {
       return
     }
 
+    if (form.password.length < 6) {
+      setError('Hasło musi mieć minimum 6 znaków.')
+      return
+    }
+
     setSubmitting(true)
 
+    // 1. Create auth account
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email: form.email,
+      password: form.password,
+      options: {
+        data: { full_name: form.full_name },
+      },
+    })
+
+    if (authError) {
+      setSubmitting(false)
+      if (authError.message.includes('already registered')) {
+        setError('Ten email jest już zarejestrowany. Zaloguj się.')
+      } else {
+        setError('Błąd rejestracji: ' + authError.message)
+      }
+      return
+    }
+
+    // 2. Create member record linked to auth user
     const { error: dbError } = await supabase.from('members').insert({
       full_name: form.full_name,
       email: form.email,
       phone: form.phone || null,
-      license_number: form.has_license ? form.license_number : null,
+      license_number: form.has_license && form.license_number ? form.license_number : null,
       class: 'III',
       role: 'member',
       qr_code: `QR-${Date.now()}`,
+      auth_id: authData.user?.id,
     })
 
     setSubmitting(false)
 
     if (dbError) {
+      // Clean up auth user if member creation fails
       if (dbError.code === '23505') {
         setError('Ten email lub numer licencji jest już zarejestrowany.')
       } else {
-        setError('Błąd rejestracji: ' + dbError.message)
+        setError('Błąd tworzenia profilu: ' + dbError.message)
       }
       return
     }
 
     setDone(true)
+  }
+
+  // Redirect if already logged in
+  if (user) {
+    return (
+      <div className="max-w-md mx-auto px-4 py-16 text-center">
+        <div className="bg-card border border-border rounded-xl p-8">
+          <h2 className="text-xl font-bold mb-2">Jesteś już zalogowany</h2>
+          <p className="text-sm text-muted mb-6">Masz już konto w systemie.</p>
+          <Link
+            href="/kalendarz"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors"
+          >
+            Przejdź do kalendarza
+          </Link>
+        </div>
+      </div>
+    )
   }
 
   if (done) {
@@ -67,17 +120,17 @@ export default function JoinPage() {
           <div className="w-16 h-16 rounded-full bg-success/20 flex items-center justify-center mx-auto mb-4">
             <Check className="w-8 h-8 text-success" />
           </div>
-          <h2 className="text-2xl font-bold mb-2">Wniosek złożony!</h2>
-          <p className="text-muted mb-2">Dziękujemy, {form.full_name}!</p>
+          <h2 className="text-2xl font-bold mb-2">Konto utworzone!</h2>
+          <p className="text-muted mb-2">Witaj, {form.full_name}!</p>
           <p className="text-sm text-muted mb-6">
-            Twój wniosek o członkostwo zostanie rozpatrzony przez zarząd klubu.
-            Informacja o decyzji zostanie wysłana na adres {form.email}.
+            Twoje konto zostało utworzone. Sprawdź email ({form.email}) i potwierdź
+            adres, aby aktywować konto. Potem możesz się zalogować i zapisywać na zawody.
           </p>
           <Link
-            href="/"
+            href="/logowanie"
             className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors"
           >
-            Wróć na stronę główną
+            Zaloguj się
           </Link>
         </div>
       </div>
@@ -95,7 +148,7 @@ export default function JoinPage() {
         <div className="text-center mb-8">
           <UserPlus className="w-12 h-12 text-primary mx-auto mb-3" />
           <h1 className="text-2xl font-bold">Dołącz do klubu</h1>
-          <p className="text-sm text-muted mt-1">Wypełnij formularz członkowski</p>
+          <p className="text-sm text-muted mt-1">Utwórz konto i wypełnij formularz członkowski</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
@@ -123,6 +176,29 @@ export default function JoinPage() {
               placeholder="jan@example.com"
               className="w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
             />
+          </div>
+
+          {/* Password */}
+          <div>
+            <label className="text-sm text-muted block mb-1">Hasło *</label>
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                minLength={6}
+                value={form.password}
+                onChange={e => update('password', e.target.value)}
+                placeholder="Minimum 6 znaków"
+                className="w-full bg-background border border-border rounded-lg px-4 py-3 pr-12 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-3 text-muted hover:text-foreground transition-colors"
+              >
+                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
+            </div>
           </div>
 
           {/* Phone */}
@@ -232,8 +308,13 @@ export default function JoinPage() {
             disabled={submitting}
             className="w-full bg-primary text-background font-semibold py-3 rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50"
           >
-            {submitting ? 'Wysyłanie...' : 'Złóż wniosek o członkostwo'}
+            {submitting ? 'Tworzenie konta...' : 'Utwórz konto i dołącz'}
           </button>
+
+          <p className="text-sm text-muted text-center">
+            Masz już konto?{' '}
+            <Link href="/logowanie" className="text-primary hover:underline">Zaloguj się</Link>
+          </p>
         </form>
       </div>
     </div>

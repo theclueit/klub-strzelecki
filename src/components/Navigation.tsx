@@ -2,21 +2,28 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Target, Calendar, Trophy, Users, Crosshair, UserPlus, Menu, X } from 'lucide-react'
+import { Target, Calendar, Trophy, Users, Crosshair, UserPlus, LogIn, LogOut, Menu, X } from 'lucide-react'
 import { useState } from 'react'
+import { useAuth } from '@/components/AuthProvider'
 
-const links = [
+const publicLinks = [
   { href: '/', label: 'O klubie', icon: Target },
   { href: '/kalendarz', label: 'Kalendarz', icon: Calendar },
   { href: '/rankingi', label: 'Rankingi', icon: Trophy },
   { href: '/zawodnicy', label: 'Zawodnicy', icon: Users },
-  { href: '/dolacz', label: 'Dołącz', icon: UserPlus },
-  { href: '/sedzia', label: 'Panel sędziego', icon: Crosshair },
 ]
 
 export default function Navigation() {
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
+  const { member, loading, signOut } = useAuth()
+
+  const links = [
+    ...publicLinks,
+    ...(member?.role === 'judge' || member?.role === 'admin'
+      ? [{ href: '/sedzia', label: 'Panel sędziego', icon: Crosshair }]
+      : []),
+  ]
 
   return (
     <nav className="bg-card border-b border-border sticky top-0 z-50">
@@ -43,6 +50,51 @@ export default function Navigation() {
                 {label}
               </Link>
             ))}
+
+            {/* Auth section */}
+            {!loading && (
+              member ? (
+                <div className="flex items-center gap-2 ml-2 pl-2 border-l border-border">
+                  <Link
+                    href={`/zawodnicy/${member.id}`}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-muted hover:text-foreground hover:bg-card-hover transition-colors"
+                  >
+                    <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-primary text-xs font-bold">
+                      {member.full_name.charAt(0)}
+                    </div>
+                    {member.full_name.split(' ')[0]}
+                  </Link>
+                  <button
+                    onClick={signOut}
+                    className="p-2 text-muted hover:text-foreground rounded-lg hover:bg-card-hover transition-colors"
+                    title="Wyloguj"
+                  >
+                    <LogOut className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1 ml-2 pl-2 border-l border-border">
+                  <Link
+                    href="/logowanie"
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      pathname === '/logowanie'
+                        ? 'bg-primary/15 text-primary'
+                        : 'text-muted hover:text-foreground hover:bg-card-hover'
+                    }`}
+                  >
+                    <LogIn className="w-4 h-4" />
+                    Zaloguj
+                  </Link>
+                  <Link
+                    href="/dolacz"
+                    className="flex items-center gap-2 px-4 py-2 bg-primary text-background rounded-lg text-sm font-semibold hover:bg-primary-dark transition-colors"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    Dołącz
+                  </Link>
+                </div>
+              )
+            )}
           </div>
 
           {/* Mobile toggle */}
@@ -72,6 +124,52 @@ export default function Navigation() {
                 {label}
               </Link>
             ))}
+
+            {/* Mobile auth */}
+            {!loading && (
+              <div className="pt-2 mt-2 border-t border-border space-y-1">
+                {member ? (
+                  <>
+                    <Link
+                      href={`/zawodnicy/${member.id}`}
+                      onClick={() => setOpen(false)}
+                      className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-muted hover:text-foreground hover:bg-card-hover"
+                    >
+                      <div className="w-5 h-5 rounded-full bg-primary/20 flex items-center justify-center text-primary text-xs font-bold">
+                        {member.full_name.charAt(0)}
+                      </div>
+                      Mój profil
+                    </Link>
+                    <button
+                      onClick={() => { signOut(); setOpen(false) }}
+                      className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-muted hover:text-foreground hover:bg-card-hover w-full"
+                    >
+                      <LogOut className="w-5 h-5" />
+                      Wyloguj
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <Link
+                      href="/logowanie"
+                      onClick={() => setOpen(false)}
+                      className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-muted hover:text-foreground hover:bg-card-hover"
+                    >
+                      <LogIn className="w-5 h-5" />
+                      Zaloguj się
+                    </Link>
+                    <Link
+                      href="/dolacz"
+                      onClick={() => setOpen(false)}
+                      className="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium text-primary hover:bg-primary/10"
+                    >
+                      <UserPlus className="w-5 h-5" />
+                      Dołącz do klubu
+                    </Link>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
