@@ -165,7 +165,7 @@ export default function AdminPage() {
   const [onsiteMessage, setOnsiteMessage] = useState('')
   const [onsiteMemberSearch, setOnsiteMemberSearch] = useState('')
   const [onsiteGuestForm, setOnsiteGuestForm] = useState({
-    full_name: '', email: '', phone: '', has_license: false, license_number: '',
+    full_name: '', email: '', phone: '', has_license: false, license_number: '', club_name: '',
   })
 
   // Form states
@@ -931,6 +931,7 @@ export default function AdminPage() {
         phone: onsiteGuestForm.phone || null,
         has_license: onsiteGuestForm.has_license,
         license_number: onsiteGuestForm.has_license ? onsiteGuestForm.license_number || null : null,
+        club_name: onsiteGuestForm.club_name || null,
         experience: 'walk-in',
         status: 'confirmed',
       })
@@ -961,7 +962,7 @@ export default function AdminPage() {
     }
 
     setOnsiteMessage('Gość zarejestrowany pomyślnie!')
-    setOnsiteGuestForm({ full_name: '', email: '', phone: '', has_license: false, license_number: '' })
+    setOnsiteGuestForm({ full_name: '', email: '', phone: '', has_license: false, license_number: '', club_name: '' })
     setOnsiteDisciplineId('')
     setOnsiteSlotId('')
     setOnsiteSaving(false)
@@ -2148,7 +2149,7 @@ export default function AdminPage() {
                     )}
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
                     <div>
                       <label className="text-xs text-muted block mb-1">Imię i nazwisko *</label>
                       <input
@@ -2157,6 +2158,16 @@ export default function AdminPage() {
                         onChange={e => setOnsiteGuestForm(f => ({ ...f, full_name: e.target.value }))}
                         className={inputClass + ' text-xs'}
                         placeholder="Jan Kowalski"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted block mb-1">Klub (opcjonalnie)</label>
+                      <input
+                        type="text"
+                        value={onsiteGuestForm.club_name}
+                        onChange={e => setOnsiteGuestForm(f => ({ ...f, club_name: e.target.value }))}
+                        className={inputClass + ' text-xs'}
+                        placeholder="Nazwa klubu"
                       />
                     </div>
                     <div>
