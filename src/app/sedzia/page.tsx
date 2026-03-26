@@ -457,7 +457,7 @@ export default function JudgePage() {
 
   // LOGIN
   if (step === 'login') {
-    if (authLoading || !autoLoginDone) {
+    if (authLoading || !autoLoginDone || (authMember && (authMember.role === 'judge' || authMember.role === 'admin'))) {
       return <div className="p-16 text-center text-muted">Ładowanie...</div>
     }
     return (
