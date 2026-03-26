@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
-import { Crosshair, Camera, Upload, Check, LogIn, LogOut, Search, User, Target, AlertTriangle, List, Hash } from 'lucide-react'
+import { Crosshair, Camera, Upload, Check, LogOut, Search, User, Target, AlertTriangle, List, Hash } from 'lucide-react'
+import Link from 'next/link'
 import type { Member } from '@/types/database'
 
 type Step = 'login' | 'select-event' | 'select-member' | 'select-discipline' | 'photo' | 'review' | 'done'
@@ -27,8 +28,6 @@ export default function JudgePage() {
   const { member: authMember, loading: authLoading } = useAuth()
   const [step, setStep] = useState<Step>('login')
   const [judge, setJudge] = useState<Member | null>(null)
-  const [pin, setPin] = useState('')
-  const [loginError, setLoginError] = useState('')
   const [autoLoginDone, setAutoLoginDone] = useState(false)
 
   // Assigned events
@@ -142,24 +141,6 @@ export default function JudgePage() {
       setAutoLoginDone(true)
     }
   }, [authMember, authLoading, autoLoginDone, step, loadAssignedEvents])
-
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault()
-    setLoginError('')
-    const { data, error } = await supabase
-      .from('members')
-      .select('*')
-      .eq('license_number', pin)
-      .in('role', ['judge', 'admin'])
-      .single()
-    if (error || !data) {
-      setLoginError('Nieprawidłowy PIN lub brak uprawnień sędziego.')
-      return
-    }
-    setJudge(data as Member)
-    try { sessionStorage.setItem('judge_session', JSON.stringify({ judgeData: data })) } catch {}
-    loadAssignedEvents(data as Member)
-  }
 
   async function selectEvent(eventId: string, judgeOverride?: Member) {
     setSelectedEventId(eventId)
@@ -481,26 +462,17 @@ export default function JudgePage() {
     }
     return (
       <div className="max-w-md mx-auto px-4 py-16">
-        <div className="bg-card border border-border rounded-xl p-8">
-          <div className="text-center mb-6">
-            <Crosshair className="w-12 h-12 text-primary mx-auto mb-3" />
-            <h1 className="text-2xl font-bold">Panel sędziego</h1>
-            <p className="text-sm text-muted mt-1">Zaloguj się numerem licencji</p>
-          </div>
-          <form onSubmit={handleLogin} className="space-y-4">
-            <input
-              type="text"
-              value={pin}
-              onChange={e => setPin(e.target.value)}
-              placeholder="Numer licencji (np. PL-2024-001)"
-              className={inputClass}
-            />
-            {loginError && <p className="text-sm text-danger">{loginError}</p>}
-            <button type="submit" className="w-full bg-primary text-background font-semibold py-3 rounded-lg hover:bg-primary-dark transition-colors flex items-center justify-center gap-2">
-              <LogIn className="w-4 h-4" />
-              Zaloguj
-            </button>
-          </form>
+        <div className="bg-card border border-border rounded-xl p-8 text-center">
+          <Crosshair className="w-12 h-12 text-primary mx-auto mb-3" />
+          <h1 className="text-2xl font-bold mb-2">Panel sędziego</h1>
+          <p className="text-muted mb-6">Zaloguj się na swoje konto, aby uzyskać dostęp do panelu sędziego.</p>
+          <Link
+            href="/logowanie"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors"
+          >
+            Zaloguj się
+          </Link>
+          <p className="text-xs text-muted mt-4">Dostęp mają tylko członkowie z rolą sędziego lub administratora.</p>
         </div>
       </div>
     )
@@ -515,7 +487,7 @@ export default function JudgePage() {
             <h1 className="text-2xl font-bold">Wybierz zawody</h1>
             <p className="text-sm text-muted">Zalogowany: {judge?.full_name}</p>
           </div>
-          <button onClick={() => { setJudge(null); setStep('login'); try { sessionStorage.removeItem('judge_session') } catch {} }} className="text-muted hover:text-foreground transition-colors">
+          <button onClick={() => { setJudge(null); setStep('login'); try { sessionStorage.removeItem('judge_session') } catch {} }} className="text-muted hover:text-foreground transition-colors" title="Wyloguj z panelu sędziego">
             <LogOut className="w-5 h-5" />
           </button>
         </div>

@@ -69,7 +69,19 @@ interface InventoryItem {
   min_stock_level: number
 }
 
-type Tab = 'events' | 'disciplines' | 'judges' | 'registrations' | 'inventory'
+interface Regulation {
+  id: string
+  slug: string
+  title: string
+  content: string
+  version: number
+  is_active: boolean
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+type Tab = 'events' | 'disciplines' | 'judges' | 'registrations' | 'inventory' | 'regulations'
 
 export default function AdminPage() {
   const { member, loading } = useAuth()
@@ -87,6 +99,12 @@ export default function AdminPage() {
   const [eventDisciplines, setEventDisciplines] = useState<(EventDiscipline & { discipline?: Discipline })[]>([])
   const [regDisciplines, setRegDisciplines] = useState<RegDiscipline[]>([])
   const [eventSlots, setEventSlots] = useState<EventDisciplineSlot[]>([])
+  const [regulations, setRegulations] = useState<Regulation[]>([])
+  const [regulationHistory, setRegulationHistory] = useState<Regulation[]>([])
+  const [editingRegulation, setEditingRegulation] = useState<Regulation | null>(null)
+  const [regContent, setRegContent] = useState('')
+  const [historySlug, setHistorySlug] = useState<string | null>(null)
+  const [savingReg, setSavingReg] = useState(false)
 
   // Modals
   const [showEventForm, setShowEventForm] = useState(false)
@@ -173,7 +191,7 @@ export default function AdminPage() {
   }, [member, loading])
 
   async function loadAll() {
-    const [evRes, discRes, judgesRes, ejRes, membersRes, guestRes, memberRegsRes, edRes, rdRes, slotsRes, invRes] = await Promise.all([
+    const [evRes, discRes, judgesRes, ejRes, membersRes, guestRes, memberRegsRes, edRes, rdRes, slotsRes, invRes, regRes] = await Promise.all([
       supabase.from('events').select('*').order('start_date', { ascending: false }),
       supabase.from('disciplines').select('*').order('name'),
       supabase.from('members').select('*').in('role', ['judge', 'admin']).order('full_name'),
@@ -185,6 +203,7 @@ export default function AdminPage() {
       supabase.from('registration_disciplines').select('*'),
       supabase.from('event_discipline_slots').select('*').order('start_time'),
       supabase.from('inventory_items').select('*').order('category').order('name'),
+      supabase.from('regulations').select('*').eq('is_active', true).order('updated_at', { ascending: false }),
     ])
     setEvents((evRes.data ?? []) as EventRow[])
     setDisciplines((discRes.data ?? []) as Discipline[])
@@ -197,6 +216,7 @@ export default function AdminPage() {
     setRegDisciplines((rdRes.data ?? []) as RegDiscipline[])
     setEventSlots((slotsRes.data ?? []) as EventDisciplineSlot[])
     setInventoryItems((invRes.data ?? []) as InventoryItem[])
+    setRegulations((regRes.data ?? []) as Regulation[])
   }
 
   // ---- EVENTS ----
@@ -1084,6 +1104,7 @@ export default function AdminPage() {
           { key: 'registrations' as Tab, label: 'Zgloszenia', icon: ClipboardList },
           { key: 'judges' as Tab, label: 'Sedziowie', icon: Users },
           { key: 'inventory' as Tab, label: 'Magazyn', icon: Package },
+          { key: 'regulations' as Tab, label: 'Regulaminy', icon: Shield },
         ].map(({ key, label, icon: Icon }) => (
           <button
             key={key}
@@ -2433,6 +2454,158 @@ export default function AdminPage() {
           )}
         </div>
       )}
+      {/* Regulations Tab */}
+      {tab === 'regulations' && (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold">Regulaminy i zasady</h2>
+          </div>
+
+          {/* Active regulations list */}
+          <div className="space-y-3">
+            {regulations.map(reg => (
+              <div key={reg.id} className="bg-card border border-border rounded-lg p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-lg">{reg.title}</h3>
+                    <div className="flex items-center gap-3 mt-1 text-xs text-muted">
+                      <span className="px-2 py-0.5 rounded bg-primary/10 text-primary font-medium">v{reg.version}</span>
+                      <span>Slug: {reg.slug}</span>
+                      <span>Ostatnia zmiana: {new Date(reg.updated_at).toLocaleDateString('pl-PL')}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={async () => {
+                        setHistorySlug(historySlug === reg.slug ? null : reg.slug)
+                        if (historySlug !== reg.slug) {
+                          const { data } = await supabase
+                            .from('regulations')
+                            .select('*')
+                            .eq('slug', reg.slug)
+                            .order('version', { ascending: false })
+                          setRegulationHistory((data ?? []) as Regulation[])
+                        }
+                      }}
+                      className="px-3 py-1.5 text-xs rounded border border-border hover:bg-card-hover transition-colors"
+                    >
+                      <Clock className="w-3.5 h-3.5 inline mr-1" />
+                      Historia
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEditingRegulation(reg)
+                        setRegContent(reg.content)
+                      }}
+                      className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                    >
+                      <Pencil className="w-3.5 h-3.5 inline mr-1" />
+                      Edytuj
+                    </button>
+                  </div>
+                </div>
+
+                {/* Version history */}
+                {historySlug === reg.slug && (
+                  <div className="mt-4 border-t border-border pt-4">
+                    <h4 className="text-sm font-medium mb-2">Historia wersji</h4>
+                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                      {regulationHistory.map(ver => (
+                        <div key={ver.id} className={`flex items-center justify-between p-2 rounded text-xs ${ver.is_active ? 'bg-primary/10 border border-primary/30' : 'bg-background'}`}>
+                          <div>
+                            <span className="font-medium">v{ver.version}</span>
+                            <span className="text-muted ml-2">{new Date(ver.created_at).toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                            {ver.is_active && <span className="ml-2 text-primary font-medium">(aktualna)</span>}
+                          </div>
+                          {!ver.is_active && (
+                            <button
+                              onClick={async () => {
+                                if (!confirm(`Przywrócić wersję ${ver.version}?`)) return
+                                setSavingReg(true)
+                                await supabase.from('regulations').update({ is_active: false }).eq('slug', reg.slug).eq('is_active', true)
+                                await supabase.from('regulations').insert({
+                                  slug: reg.slug,
+                                  title: reg.title,
+                                  content: ver.content,
+                                  version: reg.version + 1,
+                                  is_active: true,
+                                  created_by: member?.id || null,
+                                })
+                                setSavingReg(false)
+                                setHistorySlug(null)
+                                loadAll()
+                              }}
+                              className="px-2 py-1 rounded border border-border hover:bg-card-hover transition-colors"
+                              disabled={savingReg}
+                            >
+                              Przywróć
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Inline editor */}
+                {editingRegulation?.id === reg.id && (
+                  <div className="mt-4 border-t border-border pt-4">
+                    <textarea
+                      value={regContent}
+                      onChange={e => setRegContent(e.target.value)}
+                      rows={15}
+                      className="w-full p-3 bg-background border border-border rounded-lg text-sm font-mono resize-y"
+                      placeholder="Treść regulaminu (HTML dozwolony)..."
+                    />
+                    <div className="flex items-center justify-between mt-3">
+                      <p className="text-xs text-muted">Zapisanie utworzy nową wersję (v{reg.version + 1})</p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => { setEditingRegulation(null); setRegContent('') }}
+                          className="px-3 py-1.5 text-xs rounded border border-border hover:bg-card-hover transition-colors"
+                        >
+                          Anuluj
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (regContent.trim() === reg.content.trim()) {
+                              alert('Nie wprowadzono żadnych zmian.')
+                              return
+                            }
+                            setSavingReg(true)
+                            await supabase.from('regulations').update({ is_active: false }).eq('id', reg.id)
+                            await supabase.from('regulations').insert({
+                              slug: reg.slug,
+                              title: reg.title,
+                              content: regContent,
+                              version: reg.version + 1,
+                              is_active: true,
+                              created_by: member?.id || null,
+                            })
+                            setSavingReg(false)
+                            setEditingRegulation(null)
+                            setRegContent('')
+                            loadAll()
+                          }}
+                          disabled={savingReg}
+                          className="px-4 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
+                        >
+                          {savingReg ? 'Zapisywanie...' : 'Zapisz nową wersję'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {regulations.length === 0 && (
+              <p className="text-muted text-center py-8">Brak regulaminów w bazie danych.</p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Attendance List Preview Modal */}
       {attendanceLoading && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">

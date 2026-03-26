@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { sendGuestRegistrationConfirmation } from '@/lib/email'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -120,6 +121,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Insert discipline selections
+    let disciplineNames: string[] = []
     if (disciplines && disciplines.length > 0 && regData) {
       const rows = disciplines.map(d => ({
         event_discipline_id: d.event_discipline_id,
@@ -130,7 +132,26 @@ export async function POST(req: NextRequest) {
       }))
 
       await supabase.from('registration_disciplines').insert(rows)
+
+      // Get discipline names for email
+      const edIds = disciplines.map(d => d.event_discipline_id)
+      const { data: eds } = await supabase
+        .from('event_disciplines')
+        .select('id, discipline:disciplines!discipline_id(name)')
+        .in('id', edIds)
+
+      disciplineNames = (eds || []).map((ed: any) => ed.discipline?.name).filter(Boolean)
     }
+
+    // Send confirmation email to guest
+    sendGuestRegistrationConfirmation({
+      to: email,
+      guestName: full_name,
+      eventTitle: event.title,
+      eventDate: event.start_date,
+      eventLocation: event.location,
+      disciplines: disciplineNames,
+    }).catch(() => {})
 
     return NextResponse.json({ success: true, registration_id: regData.id })
   } catch (err: any) {

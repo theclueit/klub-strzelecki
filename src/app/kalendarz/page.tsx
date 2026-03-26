@@ -1,6 +1,6 @@
 import { supabase } from '@/lib/supabase'
 import { Calendar } from 'lucide-react'
-import EventCard from '@/components/EventCard'
+import CalendarGroups from '@/components/CalendarGroups'
 
 export const dynamic = 'force-dynamic'
 
@@ -68,28 +68,13 @@ export default async function CalendarPage() {
       {!events.length ? (
         <p className="text-muted">Brak nadchodzących wydarzeń.</p>
       ) : (
-        <div className="space-y-4">
-          {events.map((event: any) => {
-            const eventDiscs = allEventDiscs.filter(ed => ed.event_id === event.id)
-            const eventDiscIds = new Set(eventDiscs.map(ed => ed.id))
-            const eventSlots = allSlots
-              .filter(s => eventDiscIds.has(s.event_discipline_id))
-              .map(s => ({
-                ...s,
-                current_count: slotCounts[s.id] || 0,
-              }))
-
-            return (
-              <EventCard
-                key={event.id}
-                event={event}
-                regCount={regCounts[event.id] ?? 0}
-                eventDisciplines={eventDiscs}
-                slots={eventSlots}
-              />
-            )
-          })}
-        </div>
+        <CalendarGroups
+          events={events}
+          allEventDiscs={allEventDiscs}
+          allSlots={allSlots}
+          slotCounts={slotCounts}
+          regCounts={regCounts}
+        />
       )}
     </div>
   )

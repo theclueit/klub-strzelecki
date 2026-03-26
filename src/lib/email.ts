@@ -18,6 +18,34 @@ function formatDate(dateStr: string) {
   })
 }
 
+const safetyRules = `
+  <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
+    <h3 style="color: #ff6b35; margin: 0 0 12px; font-size: 15px;">&#128680; Zasady bezpieczeństwa na strzelnicy</h3>
+    <ol style="margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.8; color: #ccc;">
+      <li>Broń <strong style="color: #fff;">zawsze</strong> traktuj jako naładowaną.</li>
+      <li>Nigdy nie kieruj lufy w stronę osób — broń kierujemy <strong style="color: #fff;">wyłącznie w stronę kulochwytu</strong>.</li>
+      <li>Palec na spuście <strong style="color: #fff;">tylko</strong> w momencie oddawania strzału.</li>
+      <li>Przed strzelaniem upewnij się, że <strong style="color: #fff;">znasz swój cel i co jest za nim</strong>.</li>
+      <li>Ładowanie i rozładowanie broni <strong style="color: #fff;">wyłącznie na stanowisku</strong>, po komendzie prowadzącego strzelanie.</li>
+      <li>Na linii ognia obowiązują <strong style="color: #fff;">ochronniki słuchu i okulary ochronne</strong>.</li>
+      <li><strong style="color: #fff;">Bezwzględnie</strong> wykonuj polecenia prowadzącego strzelanie.</li>
+      <li>W przypadku niesprawności broni — <strong style="color: #fff;">odłóż broń i wezwij prowadzącego</strong>.</li>
+    </ol>
+  </div>
+
+  <div style="background: #1e2a45; border-left: 3px solid #ff6b35; border-radius: 0 8px 8px 0; padding: 16px; margin: 0 0 24px;">
+    <h3 style="color: #fff; margin: 0 0 8px; font-size: 14px;">&#128220; Regulamin strzelnicy — najważniejsze punkty</h3>
+    <ul style="margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.8; color: #bbb;">
+      <li>Przemieszczanie się z bronią dozwolone wyłącznie na trasie miejsce zamieszkania — strzelnica. Broń rozładowana, w pokrowcu, amunicja osobno (Ustawa o broni i amunicji, art. 10 ust. 8).</li>
+      <li>Na terenie strzelnicy obowiązuje bezwzględny zakaz spożywania alkoholu i środków odurzających.</li>
+      <li>Osoby bez pozwolenia na broń mogą strzelać wyłącznie pod bezpośrednim nadzorem prowadzącego strzelanie.</li>
+      <li>Strzelanie dozwolone wyłącznie na wyznaczonych stanowiskach, do wyznaczonych celów.</li>
+      <li>Zabrania się wchodzenia przed linię ognia bez zgody prowadzącego strzelanie.</li>
+      <li>Każdy uczestnik zobowiązany jest do podpisania listy obecności przed rozpoczęciem strzelania.</li>
+    </ul>
+  </div>
+`
+
 function emailWrapper(content: string) {
   return `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -66,6 +94,8 @@ export async function sendRegistrationConfirmation(params: {
         <p style="margin: 0 0 6px; font-size: 13px; color: #aaa;">Wybrane dyscypliny:</p>
         <ul style="margin: 0; padding-left: 20px; font-size: 14px;">${disciplinesList}</ul>
       </div>
+
+      ${safetyRules}
 
       <div style="text-align: center; margin: 0 0 24px;">
         <a href="${appUrl}/kalendarz" style="display: inline-block; background: #ff6b35; color: #1a1a2e; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: bold; font-size: 16px;">
@@ -168,6 +198,48 @@ export async function sendResultNotification(params: {
           Zobacz pełne wyniki
         </a>
       </div>
+    `),
+  })
+}
+
+export async function sendGuestRegistrationConfirmation(params: {
+  to: string
+  guestName: string
+  eventTitle: string
+  eventDate: string
+  eventLocation: string | null
+  disciplines: string[]
+}) {
+  const resend = getResend()
+  const date = formatDate(params.eventDate)
+  const disciplinesList = params.disciplines.length > 0
+    ? params.disciplines.map(d => `<li style="margin: 4px 0;">${d}</li>`).join('')
+    : '<li>Nie wybrano dyscyplin</li>'
+
+  return resend.emails.send({
+    from: fromEmail,
+    to: params.to,
+    subject: `Potwierdzenie zgłoszenia: ${params.eventTitle}`,
+    html: emailWrapper(`
+      <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Potwierdzenie zgłoszenia gościa</p>
+
+      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${params.guestName}</strong>,</p>
+
+      <p style="margin: 0 0 24px;">Twoje zgłoszenie na wydarzenie zostało przyjęte. Organizator skontaktuje się z Tobą w celu potwierdzenia udziału.</p>
+
+      <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
+        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${params.eventTitle}</h2>
+        <p style="margin: 0 0 6px; font-size: 14px;">&#128197; ${date}</p>
+        ${params.eventLocation ? `<p style="margin: 0 0 12px; font-size: 14px;">&#128205; ${params.eventLocation}</p>` : ''}
+        <p style="margin: 0 0 6px; font-size: 13px; color: #aaa;">Wybrane dyscypliny:</p>
+        <ul style="margin: 0; padding-left: 20px; font-size: 14px;">${disciplinesList}</ul>
+      </div>
+
+      ${safetyRules}
+
+      <p style="font-size: 13px; color: #aaa;">
+        Nie masz jeszcze konta? <a href="${appUrl}/dolacz" style="color: #ff6b35;">Zarejestruj się</a> aby mieć pełny dostęp do kalendarza, wyników i rankingów.
+      </p>
     `),
   })
 }
