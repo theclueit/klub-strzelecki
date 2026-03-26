@@ -12,12 +12,35 @@ export interface Member {
   role: 'member' | 'judge' | 'admin'
   created_at: string
   judge_class: string | null
+  judge_license_number: string | null
   is_range_officer: boolean
   has_weapons_permit: boolean
   is_sports_instructor: boolean
   club_name: string
   range_officer_number: string | null
   shooting_patent_number: string | null
+  // Sign-in sheet fields
+  pesel: string | null
+  date_of_birth: string | null
+  address: string | null
+  id_document_number: string | null
+  id_document_type: string | null
+  weapon_permit_number: string | null
+  weapon_permit_issuing_authority: string | null
+  data_confirmed_at: string | null
+}
+
+export interface MemberWeapon {
+  id: string
+  member_id: string
+  name: string
+  type: string
+  caliber: string
+  serial_number: string
+  permit_number: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
 }
 
 export interface Discipline {
@@ -25,7 +48,19 @@ export interface Discipline {
   name: string
   description: string | null
   target_type: string | null
+  category: 'discipline' | 'service'
   default_price_pln: number
+  own_weapon_price_pln: number
+  stations_count: number
+  judges_per_station: number
+  participants_per_hour: number
+  // Ammunition & materials
+  caliber: string | null
+  shots_count: number
+  ammo_per_pack: number
+  targets_per_competitor: number
+  distance_m: number | null
+  target_name: string | null
 }
 
 export interface Event {
@@ -102,6 +137,7 @@ export interface EventDiscipline {
   event_id: string
   discipline_id: string
   price_pln: number
+  own_weapon_price_pln: number
   discipline?: Discipline
 }
 
@@ -120,6 +156,8 @@ export interface RegistrationDiscipline {
   member_registration_id: string | null
   guest_registration_id: string | null
   event_discipline_slot_id: string | null
+  price_pln: number
+  own_weapon: boolean
   event_discipline?: EventDiscipline
 }
 

@@ -2,13 +2,13 @@ import { supabase } from '@/lib/supabase'
 import { Trophy, ArrowRight } from 'lucide-react'
 import Link from 'next/link'
 
-export const revalidate = 60
+export const dynamic = 'force-dynamic'
 
 export default async function ResultsPage() {
   // Get all events that have results
   const { data: results } = await supabase
     .from('results')
-    .select('id, total_score, max_score, tens_count, misses, shot_at, member:members(id, full_name, class, license_number, club_name), event:events(id, title, start_date, event_type), discipline:disciplines(name)')
+    .select('id, total_score, max_score, tens_count, misses, time_seconds, shot_at, member:members!results_member_id_fkey(id, full_name, class, license_number, club_name), event:events(id, title, start_date, event_type), discipline:disciplines(name, scoring_type)')
     .order('shot_at', { ascending: false })
 
   // Group by event
@@ -66,9 +66,15 @@ export default async function ResultsPage() {
               if (!byDiscipline[dName]) byDiscipline[dName] = []
               byDiscipline[dName].push(r)
             }
-            // Sort each discipline group by score descending
+            // Sort each discipline group by score descending; for shotgun: score desc then time asc
             for (const dName of Object.keys(byDiscipline)) {
-              byDiscipline[dName].sort((a: any, b: any) => b.total_score - a.total_score)
+              const isShotgun = byDiscipline[dName][0]?.discipline?.scoring_type === 'shotgun'
+              if (isShotgun) {
+                // Shotgun: sort by total_score ASC (total_score = time + penalties, lowest = best)
+                byDiscipline[dName].sort((a: any, b: any) => a.total_score - b.total_score)
+              } else {
+                byDiscipline[dName].sort((a: any, b: any) => b.total_score - a.total_score)
+              }
             }
 
             return (
@@ -89,7 +95,9 @@ export default async function ResultsPage() {
                 </div>
 
                 {/* Results per discipline */}
-                {Object.entries(byDiscipline).map(([discName, discResults]) => (
+                {Object.entries(byDiscipline).map(([discName, discResults]) => {
+                  const isShotgun = discResults[0]?.discipline?.scoring_type === 'shotgun'
+                  return (
                   <div key={discName}>
                     <div className="px-6 py-3 bg-background/50 border-b border-border/50">
                       <h3 className="text-sm font-semibold text-blue-400">{discName}</h3>
@@ -101,9 +109,19 @@ export default async function ResultsPage() {
                           <th className="text-left px-6 py-2">Zawodnik</th>
                           <th className="text-left px-6 py-2">Klub</th>
                           <th className="text-left px-6 py-2">Klasa</th>
-                          <th className="text-right px-6 py-2">Wynik</th>
-                          <th className="text-right px-6 py-2">10-tki</th>
-                          <th className="text-right px-6 py-2">Pudła</th>
+                          {isShotgun ? (
+                            <>
+                              <th className="text-right px-6 py-2">Czas</th>
+                              <th className="text-right px-6 py-2">Pudła</th>
+                              <th className="text-right px-6 py-2">Wynik</th>
+                            </>
+                          ) : (
+                            <>
+                              <th className="text-right px-6 py-2">Wynik</th>
+                              <th className="text-right px-6 py-2">10-tki</th>
+                              <th className="text-right px-6 py-2">Pudła</th>
+                            </>
+                          )}
                         </tr>
                       </thead>
                       <tbody>
@@ -124,18 +142,35 @@ export default async function ResultsPage() {
                                 {r.member?.class}
                               </span>
                             </td>
-                            <td className="px-6 py-2.5 text-right">
-                              <span className="font-mono font-bold text-lg">{r.total_score}</span>
-                              {r.max_score && <span className="text-xs text-muted">/{r.max_score}</span>}
-                            </td>
-                            <td className="px-6 py-2.5 text-right text-muted">{r.tens_count ?? '-'}</td>
-                            <td className="px-6 py-2.5 text-right text-muted">{r.misses ?? '-'}</td>
+                            {isShotgun ? (
+                              <>
+                                <td className="px-6 py-2.5 text-right font-mono text-muted">
+                                  {r.time_seconds ? `${Number(r.time_seconds).toFixed(2)}s` : '-'}
+                                </td>
+                                <td className="px-6 py-2.5 text-right text-muted">
+                                  {r.misses ? <span className="text-danger">{r.misses} (+{r.misses * 5}s)</span> : '0'}
+                                </td>
+                                <td className="px-6 py-2.5 text-right">
+                                  <span className="font-mono font-bold text-lg">{Number(r.total_score).toFixed(2)}s</span>
+                                </td>
+                              </>
+                            ) : (
+                              <>
+                                <td className="px-6 py-2.5 text-right">
+                                  <span className="font-mono font-bold text-lg">{r.total_score}</span>
+                                  {r.max_score && <span className="text-xs text-muted">/{r.max_score}</span>}
+                                </td>
+                                <td className="px-6 py-2.5 text-right text-muted">{r.tens_count ?? '-'}</td>
+                                <td className="px-6 py-2.5 text-right text-muted">{r.misses ?? '-'}</td>
+                              </>
+                            )}
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             )
           })}

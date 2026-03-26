@@ -2,13 +2,13 @@ import { supabase } from '@/lib/supabase'
 import { Trophy } from 'lucide-react'
 import RankingsClient from '@/components/RankingsClient'
 
-export const revalidate = 60
+export const dynamic = 'force-dynamic'
 
 export default async function RankingsPage() {
   const [resultsRes, membersRes, disciplinesRes, eventResultsRes] = await Promise.all([
     supabase
       .from('results')
-      .select('member_id, total_score, discipline:disciplines(name), member:members(id, full_name, class, license_number, club_name)')
+      .select('member_id, total_score, discipline:disciplines(name), member:members!results_member_id_fkey(id, full_name, class, license_number, club_name)')
       .order('total_score', { ascending: false }),
     supabase
       .from('members')
@@ -16,22 +16,19 @@ export default async function RankingsPage() {
       .order('full_name'),
     supabase
       .from('disciplines')
-      .select('name')
+      .select('name, category')
+      .eq('category', 'discipline')
       .order('name'),
     supabase
       .from('results')
-      .select('id, total_score, member:members(id, full_name, class, license_number, club_name), event:events(id, title, start_date, end_date), discipline:disciplines(name)')
+      .select('id, total_score, member:members!results_member_id_fkey(id, full_name, class, license_number, club_name), event:events(id, title, start_date, end_date), discipline:disciplines(name)')
       .order('total_score', { ascending: false }),
   ])
 
   const results = resultsRes.data ?? []
   const members = membersRes.data ?? []
   const disciplines = (disciplinesRes.data ?? []).map((d: { name: string }) => d.name)
-  // Filter event results to completed events only (client-side since Supabase FK filters are limited)
-  const eventResults = (eventResultsRes.data ?? []).filter((r: any) => {
-    const endDate = r.event?.end_date || r.event?.start_date
-    return endDate && new Date(endDate) < new Date()
-  })
+  const eventResults = (eventResultsRes.data ?? []) as any[]
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-12">

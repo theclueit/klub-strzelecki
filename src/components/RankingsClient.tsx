@@ -21,7 +21,7 @@ type Result = {
 
 type EventResult = {
   id: string
-  score: number
+  total_score: number
   member: { id: string; full_name: string; class: string; license_number: string; club_name: string | null } | null
   event: { id: string; title: string; start_date: string; end_date: string } | null
   discipline: { name: string } | null
@@ -66,10 +66,24 @@ export default function RankingsClient({
 
   const hasResults = results && results.length > 0
 
+  // Aggregate: best score per member per discipline
+  const bestResults: Result[] = []
+  const bestMap = new Map<string, Result>() // key: memberId-discipline
+  for (const r of results) {
+    if (!r.member) continue
+    const key = `${r.member.id}-${r.discipline?.name ?? 'other'}`
+    const existing = bestMap.get(key)
+    if (!existing || r.total_score > existing.total_score) {
+      bestMap.set(key, r)
+    }
+  }
+  bestResults.push(...bestMap.values())
+  bestResults.sort((a, b) => b.total_score - a.total_score)
+
   // Filter results by discipline
   const filteredResults = activeDiscipline === 'all'
-    ? results
-    : results.filter(r => r.discipline?.name === activeDiscipline)
+    ? bestResults
+    : bestResults.filter(r => r.discipline?.name === activeDiscipline)
 
   // Filter by search query
   const searchedResults = searchQuery
@@ -114,7 +128,7 @@ export default function RankingsClient({
       disc = { name: discName, participants: [] }
       ge.disciplines.push(disc)
     }
-    disc.participants.push({ member: er.member, score: er.score })
+    disc.participants.push({ member: er.member, score: er.total_score })
   }
 
   // Sort participants within each discipline by score descending

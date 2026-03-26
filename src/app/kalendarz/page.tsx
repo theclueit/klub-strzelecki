@@ -2,7 +2,7 @@ import { supabase } from '@/lib/supabase'
 import { Calendar } from 'lucide-react'
 import EventCard from '@/components/EventCard'
 
-export const revalidate = 60
+export const dynamic = 'force-dynamic'
 
 export default async function CalendarPage() {
   const [eventsRes, memberRegsRes, guestRegsRes, eventDiscsRes, slotsRes, regDiscsRes] = await Promise.all([
@@ -20,7 +20,7 @@ export default async function CalendarPage() {
       .neq('status', 'cancelled'),
     supabase
       .from('event_disciplines')
-      .select('*, discipline:disciplines(name)')
+      .select('*, discipline:disciplines(name, stations_count, judges_per_station)')
       .order('price_pln'),
     supabase
       .from('event_discipline_slots')
@@ -34,7 +34,7 @@ export default async function CalendarPage() {
   const events = eventsRes.data ?? []
   const allEventDiscs = (eventDiscsRes.data ?? []) as {
     id: string; event_id: string; discipline_id: string; price_pln: number;
-    discipline?: { name: string } | null
+    discipline?: { name: string; stations_count?: number; judges_per_station?: number } | null
   }[]
   const allSlots = (slotsRes.data ?? []) as {
     id: string; event_discipline_id: string; start_time: string; end_time: string; max_participants: number

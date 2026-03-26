@@ -95,6 +95,13 @@ export default function JoinPage() {
       return
     }
 
+    // Send welcome email (fire and forget)
+    fetch('/api/email/welcome', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: form.email, name: form.full_name }),
+    }).catch(() => {})
+
     setDone(true)
   }
 

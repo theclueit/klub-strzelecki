@@ -52,10 +52,9 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
   if (member.role === 'judge' || member.role === 'admin') {
     badges.push({ label: member.judge_class ? `Sędzia ${member.judge_class}` : 'Sędzia', color: 'bg-primary/20 text-primary' })
   }
-  if (member.is_range_officer) badges.push({ label: member.range_officer_number ? `Prowadzący strzelanie (${member.range_officer_number})` : 'Prowadzący strzelanie', color: 'bg-blue-500/20 text-blue-400' })
+  if (member.is_range_officer) badges.push({ label: 'Prowadzący strzelanie', color: 'bg-blue-500/20 text-blue-400' })
   if (member.has_weapons_permit) badges.push({ label: 'Pozwolenie na broń', color: 'bg-success/20 text-success' })
   if (member.is_sports_instructor) badges.push({ label: 'Instruktor strzelectwa', color: 'bg-yellow-500/20 text-yellow-400' })
-  if (member.shooting_patent_number) badges.push({ label: `Patent: ${member.shooting_patent_number}`, color: 'bg-purple-500/20 text-purple-400' })
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-12">
@@ -76,8 +75,22 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
               <span className={`text-sm px-3 py-1 rounded-full font-medium ${classColors[member.class]}`}>
                 Klasa {member.class}
               </span>
-              <span className="text-sm text-muted">{member.license_number}</span>
               <span className="text-sm text-muted">{member.club_name}</span>
+            </div>
+            {/* Numery i identyfikatory */}
+            <div className="flex items-center gap-4 mt-2 flex-wrap text-sm text-muted">
+              {member.license_number && (
+                <span>Licencja: <span className="text-foreground font-medium">{member.license_number}</span></span>
+              )}
+              {member.judge_license_number && (
+                <span>Licencja sędziowska: <span className="text-foreground font-medium">{member.judge_license_number}</span></span>
+              )}
+              {member.range_officer_number && (
+                <span>Nr prowadzącego: <span className="text-foreground font-medium">{member.range_officer_number}</span></span>
+              )}
+              {member.shooting_patent_number && (
+                <span>Patent: <span className="text-foreground font-medium">{member.shooting_patent_number}</span></span>
+              )}
             </div>
             {badges.length > 0 && (
               <div className="flex items-center gap-2 mt-2 flex-wrap">

@@ -1,0 +1,205 @@
+import { Resend } from 'resend'
+
+const resendKey = process.env.RESEND_API_KEY!
+const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://klub-strzelecki.vercel.app'
+const fromEmail = 'Klub Strzelecki <noreply@klub-strzelecki.vercel.app>'
+
+function getResend() {
+  return new Resend(resendKey)
+}
+
+function formatDate(dateStr: string) {
+  return new Date(dateStr).toLocaleDateString('pl-PL', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function emailWrapper(content: string) {
+  return `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <div style="background: #1a1a2e; border-radius: 12px; padding: 32px; color: #e0e0e0;">
+        <h1 style="color: #ff6b35; margin: 0 0 8px;">Klub Strzelecki</h1>
+        ${content}
+        <hr style="border: none; border-top: 1px solid #333; margin: 24px 0;" />
+        <p style="font-size: 11px; color: #555; margin: 0;">
+          Ta wiadomość została wygenerowana automatycznie. Nie odpowiadaj na nią.<br/>
+          <a href="${appUrl}" style="color: #ff6b35;">klub-strzelecki.vercel.app</a>
+        </p>
+      </div>
+    </div>
+  `
+}
+
+export async function sendRegistrationConfirmation(params: {
+  to: string
+  memberName: string
+  eventTitle: string
+  eventDate: string
+  eventLocation: string | null
+  disciplines: string[]
+}) {
+  const resend = getResend()
+  const date = formatDate(params.eventDate)
+  const disciplinesList = params.disciplines.length > 0
+    ? params.disciplines.map(d => `<li style="margin: 4px 0;">${d}</li>`).join('')
+    : '<li>Nie wybrano dyscyplin</li>'
+
+  return resend.emails.send({
+    from: fromEmail,
+    to: params.to,
+    subject: `Potwierdzenie zapisu: ${params.eventTitle}`,
+    html: emailWrapper(`
+      <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Potwierdzenie rejestracji na wydarzenie</p>
+
+      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${params.memberName}</strong>,</p>
+
+      <p style="margin: 0 0 24px;">Twój zapis na wydarzenie został pomyślnie zarejestrowany.</p>
+
+      <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
+        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${params.eventTitle}</h2>
+        <p style="margin: 0 0 6px; font-size: 14px;">&#128197; ${date}</p>
+        ${params.eventLocation ? `<p style="margin: 0 0 12px; font-size: 14px;">&#128205; ${params.eventLocation}</p>` : ''}
+        <p style="margin: 0 0 6px; font-size: 13px; color: #aaa;">Wybrane dyscypliny:</p>
+        <ul style="margin: 0; padding-left: 20px; font-size: 14px;">${disciplinesList}</ul>
+      </div>
+
+      <div style="text-align: center; margin: 0 0 24px;">
+        <a href="${appUrl}/kalendarz" style="display: inline-block; background: #ff6b35; color: #1a1a2e; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: bold; font-size: 16px;">
+          Zobacz kalendarz
+        </a>
+      </div>
+    `),
+  })
+}
+
+export async function sendEventReminder(params: {
+  to: string
+  memberName: string
+  eventTitle: string
+  eventDate: string
+  eventLocation: string | null
+  hoursUntil: number
+}) {
+  const resend = getResend()
+  const date = formatDate(params.eventDate)
+  const timeLabel = params.hoursUntil <= 24 ? 'jutro' : `za ${Math.round(params.hoursUntil / 24)} dni`
+
+  return resend.emails.send({
+    from: fromEmail,
+    to: params.to,
+    subject: `Przypomnienie: ${params.eventTitle} — ${timeLabel}`,
+    html: emailWrapper(`
+      <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Przypomnienie o nadchodzącym wydarzeniu</p>
+
+      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${params.memberName}</strong>,</p>
+
+      <p style="margin: 0 0 24px;">Przypominamy, że <strong style="color: #fff;">${timeLabel}</strong> odbywa się wydarzenie, na które jesteś zapisany(a):</p>
+
+      <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
+        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${params.eventTitle}</h2>
+        <p style="margin: 0 0 6px; font-size: 14px;">&#128197; ${date}</p>
+        ${params.eventLocation ? `<p style="margin: 0; font-size: 14px;">&#128205; ${params.eventLocation}</p>` : ''}
+      </div>
+
+      <div style="background: #1e2a45; border-left: 3px solid #ff6b35; border-radius: 0 8px 8px 0; padding: 16px; margin: 0 0 24px;">
+        <p style="margin: 0; font-size: 13px; color: #ccc;">
+          <strong style="color: #fff;">Pamiętaj:</strong> Broń rozładowana, w pokrowcu, amunicja osobno.
+          Przemieszczanie się z bronią dozwolone wyłącznie na trasie miejsce zamieszkania — strzelnica.
+        </p>
+      </div>
+
+      <div style="text-align: center; margin: 0 0 24px;">
+        <a href="${appUrl}/kalendarz" style="display: inline-block; background: #ff6b35; color: #1a1a2e; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: bold; font-size: 16px;">
+          Szczegóły wydarzenia
+        </a>
+      </div>
+    `),
+  })
+}
+
+export async function sendResultNotification(params: {
+  to: string
+  memberName: string
+  eventTitle: string
+  eventDate: string
+  disciplineName: string
+  totalScore: number
+  maxScore: number | null
+  position: number | null
+}) {
+  const resend = getResend()
+  const date = formatDate(params.eventDate)
+  const scoreText = params.maxScore
+    ? `${params.totalScore} / ${params.maxScore} pkt`
+    : `${params.totalScore} pkt`
+  const positionText = params.position
+    ? `<p style="margin: 0 0 6px; font-size: 14px;">&#127942; Miejsce: <strong style="color: #fff;">${params.position}</strong></p>`
+    : ''
+  const medal = params.position === 1 ? '&#129351;' : params.position === 2 ? '&#129352;' : params.position === 3 ? '&#129353;' : ''
+
+  return resend.emails.send({
+    from: fromEmail,
+    to: params.to,
+    subject: `Wyniki: ${params.eventTitle} — ${params.disciplineName}`,
+    html: emailWrapper(`
+      <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Twoje wyniki z zawodów</p>
+
+      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${params.memberName}</strong>,</p>
+
+      <p style="margin: 0 0 24px;">Twoje wyniki z zawodów zostały opublikowane:</p>
+
+      <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
+        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${params.eventTitle}</h2>
+        <p style="margin: 0 0 6px; font-size: 14px;">&#128197; ${date}</p>
+        <p style="margin: 0 0 6px; font-size: 14px;">&#127919; Dyscyplina: <strong style="color: #fff;">${params.disciplineName}</strong></p>
+        <hr style="border: none; border-top: 1px solid #2a3a5e; margin: 12px 0;" />
+        <p style="margin: 0 0 6px; font-size: 20px; text-align: center;">
+          ${medal} <strong style="color: #ff6b35;">${scoreText}</strong>
+        </p>
+        ${positionText}
+      </div>
+
+      <div style="text-align: center; margin: 0 0 24px;">
+        <a href="${appUrl}/wyniki" style="display: inline-block; background: #ff6b35; color: #1a1a2e; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: bold; font-size: 16px;">
+          Zobacz pełne wyniki
+        </a>
+      </div>
+    `),
+  })
+}
+
+export async function sendWelcomeEmail(params: {
+  to: string
+  memberName: string
+}) {
+  const resend = getResend()
+
+  return resend.emails.send({
+    from: fromEmail,
+    to: params.to,
+    subject: 'Witamy w Klubie Strzeleckim!',
+    html: emailWrapper(`
+      <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Rejestracja zakończona pomyślnie</p>
+
+      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${params.memberName}</strong>,</p>
+
+      <p style="margin: 0 0 24px;">Twoje konto w portalu Klubu Strzeleckiego zostało utworzone. Możesz teraz:</p>
+
+      <ul style="margin: 0 0 24px; padding-left: 20px; line-height: 2;">
+        <li>Przeglądać <strong style="color: #fff;">kalendarz wydarzeń</strong> i zapisywać się na zawody</li>
+        <li>Sprawdzać <strong style="color: #fff;">rankingi</strong> i wyniki</li>
+        <li>Uzupełnić swój <strong style="color: #fff;">profil</strong> (licencja, broń, dane osobowe)</li>
+      </ul>
+
+      <div style="text-align: center; margin: 0 0 24px;">
+        <a href="${appUrl}/profil" style="display: inline-block; background: #ff6b35; color: #1a1a2e; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: bold; font-size: 16px;">
+          Uzupełnij profil
+        </a>
+      </div>
+    `),
+  })
+}

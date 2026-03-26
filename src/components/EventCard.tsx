@@ -1,9 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
-import { MapPin, Users, Clock, Tag, UserPlus, Check, X, User, Mail, Phone, ExternalLink } from 'lucide-react'
+import { MapPin, Users, Clock, Tag, UserPlus, Check, X, User, Mail, Phone, ExternalLink, Target, Shield, AlertTriangle } from 'lucide-react'
 import { format } from 'date-fns'
 import { pl } from 'date-fns/locale'
 
@@ -18,7 +18,8 @@ interface EventDisc {
   id: string
   discipline_id: string
   price_pln: number
-  discipline?: { name: string } | null
+  own_weapon_price_pln?: number
+  discipline?: { name: string; stations_count?: number; judges_per_station?: number } | null
 }
 
 interface EventSlot {
@@ -49,7 +50,7 @@ interface EventCardProps {
   slots?: EventSlot[]
 }
 
-type RegMode = null | 'choose' | 'member' | 'guest'
+type RegMode = null | 'choose' | 'member' | 'guest' | 'confirm_data'
 
 export default function EventCard({ event, regCount, eventDisciplines, slots = [] }: EventCardProps) {
   const { member } = useAuth()
@@ -62,11 +63,55 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
   const [error, setError] = useState('')
   const [count, setCount] = useState(regCount)
 
+  // My registered disciplines (when already registered)
+  const [myRegId, setMyRegId] = useState<string | null>(null)
+  const [myDiscs, setMyDiscs] = useState<{ name: string; slot?: { start: string; end: string } }[]>([])
+  const [addingDiscs, setAddingDiscs] = useState(false)
+
+  // Check if already registered + load my disciplines
+  useEffect(() => {
+    if (!member) return
+    supabase
+      .from('event_registrations')
+      .select('id')
+      .eq('event_id', event.id)
+      .eq('member_id', member.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          setRegistered(true)
+          setMyRegId(data.id)
+          loadMyDisciplines(data.id)
+        }
+      })
+  }, [member, event.id])
+
+  async function loadMyDisciplines(regId: string) {
+    const { data: rds } = await supabase
+      .from('registration_disciplines')
+      .select('event_discipline_id, event_discipline_slot_id')
+      .eq('member_registration_id', regId)
+    if (!rds) return
+    const enriched = rds.map((rd: any) => {
+      const ed = eventDisciplines.find(e => e.id === rd.event_discipline_id)
+      const slot = rd.event_discipline_slot_id ? slots.find(s => s.id === rd.event_discipline_slot_id) : null
+      return {
+        edId: rd.event_discipline_id,
+        name: ed?.discipline?.name ?? '?',
+        slot: slot ? { start: slot.start_time, end: slot.end_time } : undefined,
+      }
+    })
+    setMyDiscs(enriched)
+  }
+
   // Selected disciplines for registration
   const [selectedDiscs, setSelectedDiscs] = useState<Set<string>>(new Set())
 
   // Selected slots: event_discipline_id -> slot_id
   const [selectedSlots, setSelectedSlots] = useState<Map<string, string>>(new Map())
+
+  // Own weapon: event_discipline_id -> true/false
+  const [ownWeapon, setOwnWeapon] = useState<Set<string>>(new Set())
 
   // Guest form
   const [guestForm, setGuestForm] = useState({
@@ -78,9 +123,22 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
   const isFull = event.max_participants ? count >= event.max_participants : false
   const fillPercent = event.max_participants ? Math.min((count / event.max_participants) * 100, 100) : 0
 
+  function getEdPrice(ed: EventDisc): number {
+    if (ownWeapon.has(ed.id) && (ed.own_weapon_price_pln ?? 0) > 0) return Number(ed.own_weapon_price_pln)
+    return Number(ed.price_pln)
+  }
+
   const selectedTotal = eventDisciplines
     .filter(ed => selectedDiscs.has(ed.id))
-    .reduce((sum, ed) => sum + Number(ed.price_pln), 0)
+    .reduce((sum, ed) => sum + getEdPrice(ed), 0)
+
+  // When adding disciplines, show only the cost of NEW (not already registered) ones
+  const alreadyEdIds = new Set(myDiscs.map((d: any) => d.edId))
+  const newDiscsTotal = addingDiscs
+    ? eventDisciplines
+        .filter(ed => selectedDiscs.has(ed.id) && !alreadyEdIds.has(ed.id))
+        .reduce((sum, ed) => sum + getEdPrice(ed), 0)
+    : selectedTotal
 
   // Get slots for a specific event_discipline_id
   function getSlotsForDiscipline(edId: string): EventSlot[] {
@@ -92,8 +150,11 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
     return getSlotsForDiscipline(edId).length > 0
   }
 
+  const isCourse = event.event_type === 'course'
+
   // Check if all selected disciplines that have slots also have a slot selected
   function allSlotsSelected(): boolean {
+    if (isCourse) return true
     for (const edId of selectedDiscs) {
       if (disciplineHasSlots(edId) && !selectedSlots.has(edId)) {
         return false
@@ -115,18 +176,67 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
         })
       } else {
         next.add(edId)
+        // Auto-suggest same time slot if another discipline already has one selected
+        autoSuggestSlot(edId)
       }
       return next
     })
+  }
+
+  // When selecting a new discipline, match the time of an already-selected slot
+  function autoSuggestSlot(newEdId: string) {
+    const discSlots = getSlotsForDiscipline(newEdId)
+    if (discSlots.length === 0) return
+
+    // Find a slot time from any already-selected discipline
+    let referenceSlot: EventSlot | null = null
+    for (const [edId, slotId] of selectedSlots.entries()) {
+      const found = slots.find(s => s.id === slotId)
+      if (found) { referenceSlot = found; break }
+    }
+    if (!referenceSlot) return
+
+    // Find a slot in the new discipline that starts at the same time and isn't full
+    const refStart = new Date(referenceSlot.start_time).getTime()
+    const match = discSlots.find(s =>
+      new Date(s.start_time).getTime() === refStart && s.current_count < s.max_participants
+    )
+    if (match) {
+      setSelectedSlots(prev => {
+        const next = new Map(prev)
+        next.set(newEdId, match.id)
+        return next
+      })
+    }
   }
 
   function selectSlot(edId: string, slotId: string) {
     setSelectedSlots(prev => {
       const next = new Map(prev)
       next.set(edId, slotId)
+
+      // Auto-fill same time for other selected disciplines that don't have a slot yet
+      const selectedSlotObj = slots.find(s => s.id === slotId)
+      if (selectedSlotObj) {
+        const refStart = new Date(selectedSlotObj.start_time).getTime()
+        for (const otherEdId of selectedDiscs) {
+          if (otherEdId === edId || next.has(otherEdId)) continue
+          const otherSlots = getSlotsForDiscipline(otherEdId)
+          const match = otherSlots.find(s =>
+            new Date(s.start_time).getTime() === refStart && s.current_count < s.max_participants
+          )
+          if (match) {
+            next.set(otherEdId, match.id)
+          }
+        }
+      }
+
       return next
     })
   }
+
+  // Data confirmation state
+  const [dataConfirmed, setDataConfirmed] = useState(false)
 
   function openRegistration() {
     setError('')
@@ -138,10 +248,38 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
     }
     setSelectedSlots(new Map())
     if (member) {
-      setMode('member')
+      // Courses don't require full sign-in sheet data
+      if (isCourse) {
+        setMode('member')
+      } else {
+        // Competitions/trainings: check required data for sign-in sheet
+        const missingData = !member.pesel || !member.id_document_number || !member.address || !member.date_of_birth
+        if (missingData && !addingDiscs) {
+          // Hard block — must complete profile first
+          setMode('confirm_data')
+        } else {
+          // Data complete — check if confirmation is recent
+          const lastConfirmed = member.data_confirmed_at ? new Date(member.data_confirmed_at) : null
+          const thirtyDaysAgo = new Date()
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+          if ((!lastConfirmed || lastConfirmed < thirtyDaysAgo) && !addingDiscs) {
+            setMode('confirm_data')
+          } else {
+            setMode('member')
+          }
+        }
+      }
     } else {
       setMode('choose')
     }
+  }
+
+  async function confirmDataAndProceed() {
+    if (!member) return
+    // Update data_confirmed_at timestamp
+    await supabase.from('members').update({ data_confirmed_at: new Date().toISOString() }).eq('id', member.id)
+    setDataConfirmed(true)
+    setMode('member')
   }
 
   // Member registration
@@ -155,9 +293,64 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
       setError('Wybierz termin dla każdej wybranej dyscypliny.')
       return
     }
+    // Confirm dialog for adding disciplines
+    if (addingDiscs && myRegId) {
+      const existingEdIds = new Set(myDiscs.map((d: any) => d.edId))
+      const newEdIds = Array.from(selectedDiscs).filter(edId => !existingEdIds.has(edId))
+      if (newEdIds.length === 0) {
+        setError('Nie wybrano nowych dyscyplin.')
+        return
+      }
+      const addTotal = newEdIds.reduce((sum, edId) => {
+        const ed = eventDisciplines.find(e => e.id === edId)
+        if (!ed) return sum
+        return sum + getEdPrice(ed)
+      }, 0)
+      const newNames = newEdIds.map(edId => eventDisciplines.find(e => e.id === edId)?.discipline?.name ?? '?').join(', ')
+      const confirmMsg = addTotal > 0
+        ? `Dopisać: ${newNames}?\nKwota: ${addTotal.toFixed(0)} zł`
+        : `Dopisać: ${newNames}?`
+      if (!window.confirm(confirmMsg)) return
+    }
+
     setRegistering(true)
     setError('')
 
+    // Adding disciplines to existing registration
+    if (addingDiscs && myRegId) {
+      const alreadyEdIds = new Set(myDiscs.map((d: any) => d.edId))
+      const newEdIds = Array.from(selectedDiscs).filter(edId => !alreadyEdIds.has(edId))
+      if (newEdIds.length === 0) {
+        setError('Nie wybrano nowych dyscyplin.')
+        setRegistering(false)
+        return
+      }
+      const rows = newEdIds.map(edId => {
+        const ed = eventDisciplines.find(e => e.id === edId)
+        const isOwn = ownWeapon.has(edId)
+        const price = ed ? (isOwn && (ed.own_weapon_price_pln ?? 0) > 0 ? Number(ed.own_weapon_price_pln) : Number(ed.price_pln)) : 0
+        return {
+          event_discipline_id: edId,
+          member_registration_id: myRegId,
+          price_pln: price,
+          own_weapon: isOwn,
+          ...(selectedSlots.has(edId) ? { event_discipline_slot_id: selectedSlots.get(edId) } : {}),
+        }
+      })
+      const { error: rdErr } = await supabase.from('registration_disciplines').insert(rows)
+      if (rdErr) {
+        setError('Błąd dodawania dyscyplin: ' + rdErr.message)
+        setRegistering(false)
+        return
+      }
+      await loadMyDisciplines(myRegId)
+      setRegistering(false)
+      setAddingDiscs(false)
+      setMode(null)
+      return
+    }
+
+    // New registration
     const { data: regData, error: dbError } = await supabase.from('event_registrations').insert({
       event_id: event.id,
       member_id: member.id,
@@ -177,12 +370,21 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
 
     // Save selected disciplines with slot IDs
     if (selectedDiscs.size > 0 && regData) {
-      const rows = Array.from(selectedDiscs).map(edId => ({
-        event_discipline_id: edId,
-        member_registration_id: regData.id,
-        ...(selectedSlots.has(edId) ? { event_discipline_slot_id: selectedSlots.get(edId) } : {}),
-      }))
+      const rows = Array.from(selectedDiscs).map(edId => {
+        const ed = eventDisciplines.find(e => e.id === edId)
+        const isOwn = ownWeapon.has(edId)
+        const price = ed ? (isOwn && (ed.own_weapon_price_pln ?? 0) > 0 ? Number(ed.own_weapon_price_pln) : Number(ed.price_pln)) : 0
+        return {
+          event_discipline_id: edId,
+          member_registration_id: regData.id,
+          price_pln: price,
+          own_weapon: isOwn,
+          ...(selectedSlots.has(edId) ? { event_discipline_slot_id: selectedSlots.get(edId) } : {}),
+        }
+      })
       await supabase.from('registration_disciplines').insert(rows)
+      setMyRegId(regData.id)
+      await loadMyDisciplines(regData.id)
     }
 
     setRegistering(false)
@@ -247,11 +449,18 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
 
     // Save selected disciplines with slot IDs
     if (selectedDiscs.size > 0 && regData) {
-      const rows = Array.from(selectedDiscs).map(edId => ({
-        event_discipline_id: edId,
-        guest_registration_id: regData.id,
-        ...(selectedSlots.has(edId) ? { event_discipline_slot_id: selectedSlots.get(edId) } : {}),
-      }))
+      const rows = Array.from(selectedDiscs).map(edId => {
+        const ed = eventDisciplines.find(e => e.id === edId)
+        const isOwn = ownWeapon.has(edId)
+        const price = ed ? (isOwn && (ed.own_weapon_price_pln ?? 0) > 0 ? Number(ed.own_weapon_price_pln) : Number(ed.price_pln)) : 0
+        return {
+          event_discipline_id: edId,
+          guest_registration_id: regData.id,
+          price_pln: price,
+          own_weapon: isOwn,
+          ...(selectedSlots.has(edId) ? { event_discipline_slot_id: selectedSlots.get(edId) } : {}),
+        }
+      })
       await supabase.from('registration_disciplines').insert(rows)
     }
 
@@ -266,13 +475,15 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
     setError('')
     setSelectedDiscs(new Set())
     setSelectedSlots(new Map())
+    setAddingDiscs(false)
     setGuestForm({ full_name: '', email: '', phone: '', experience: '', has_license: false, license_number: '', message: '' })
   }
 
   const inputClass = "w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
 
-  // Slot picker for a discipline
+  // Slot picker for a discipline (hidden for courses)
   function SlotPicker({ edId }: { edId: string }) {
+    if (isCourse) return null
     const discSlots = getSlotsForDiscipline(edId)
     if (discSlots.length === 0) return null
 
@@ -329,38 +540,88 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
         <div className="space-y-1.5">
           {eventDisciplines.map(ed => {
             const isSelected = selectedDiscs.has(ed.id)
+            const alreadyRegistered = addingDiscs && myDiscs.some((d: any) => d.edId === ed.id)
             return (
               <div key={ed.id}>
                 <button
                   type="button"
-                  onClick={() => toggleDisc(ed.id)}
+                  disabled={alreadyRegistered}
+                  onClick={() => !alreadyRegistered && toggleDisc(ed.id)}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border text-sm transition-colors text-left ${
-                    isSelected
-                      ? 'border-primary bg-primary/10 text-foreground'
-                      : 'border-border hover:border-primary/30 text-muted hover:text-foreground'
+                    alreadyRegistered
+                      ? 'border-border bg-success/5 text-muted cursor-default'
+                      : isSelected
+                        ? 'border-primary bg-primary/10 text-foreground'
+                        : 'border-border hover:border-primary/30 text-muted hover:text-foreground'
                   }`}
                 >
                   <div className="flex items-center gap-2">
                     <div className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${
-                      isSelected ? 'bg-primary border-primary' : 'border-border'
+                      alreadyRegistered ? 'bg-success/30 border-success/50' : isSelected ? 'bg-primary border-primary' : 'border-border'
                     }`}>
-                      {isSelected && <Check className="w-3 h-3 text-background" />}
+                      {(isSelected || alreadyRegistered) && <Check className={`w-3 h-3 ${alreadyRegistered ? 'text-success' : 'text-background'}`} />}
                     </div>
                     <span className={isSelected ? 'font-medium' : ''}>{ed.discipline?.name ?? 'Dyscyplina'}</span>
+                    {alreadyRegistered && (() => {
+                      const myDisc = myDiscs.find((d: any) => d.edId === ed.id) as any
+                      return (
+                        <span className="text-xs text-success ml-1 flex items-center gap-1">
+                          (zapisano)
+                          {!isCourse && myDisc?.slot && (
+                            <span className="flex items-center gap-0.5 text-success/70">
+                              <Clock className="w-3 h-3" />
+                              {format(new Date(myDisc.slot.start), 'HH:mm')}-{format(new Date(myDisc.slot.end), 'HH:mm')}
+                            </span>
+                          )}
+                        </span>
+                      )
+                    })()}
                   </div>
-                  {Number(ed.price_pln) > 0 && (
-                    <span className="text-xs font-semibold ml-2 flex-shrink-0">{Number(ed.price_pln).toFixed(0)} zł</span>
+                  {(Number(ed.price_pln) > 0 || Number(ed.own_weapon_price_pln ?? 0) > 0) && (
+                    <span className="text-xs font-semibold ml-2 flex-shrink-0">
+                      {ownWeapon.has(ed.id) && (ed.own_weapon_price_pln ?? 0) > 0
+                        ? `${Number(ed.own_weapon_price_pln).toFixed(0)} zł`
+                        : `${Number(ed.price_pln).toFixed(0)} zł`}
+                    </span>
                   )}
                 </button>
-                {isSelected && <SlotPicker edId={ed.id} />}
+                {isSelected && !alreadyRegistered && (ed.own_weapon_price_pln ?? 0) > 0 && (
+                  <label className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={ownWeapon.has(ed.id)}
+                      onChange={() => {
+                        setOwnWeapon(prev => {
+                          const next = new Set(prev)
+                          if (next.has(ed.id)) next.delete(ed.id)
+                          else next.add(ed.id)
+                          return next
+                        })
+                      }}
+                      className="rounded border-border"
+                    />
+                    <span>Własna broń</span>
+                    <span className="text-xs text-muted">({Number(ed.own_weapon_price_pln).toFixed(0)} zł zamiast {Number(ed.price_pln).toFixed(0)} zł)</span>
+                  </label>
+                )}
+                {isSelected && !alreadyRegistered && <SlotPicker edId={ed.id} />}
               </div>
             )
           })}
         </div>
         {selectedDiscs.size > 0 && (
           <div className="flex items-center justify-between mt-2 px-1">
-            <span className="text-xs text-muted">Wybrano: {selectedDiscs.size} {selectedDiscs.size === 1 ? 'pozycja' : selectedDiscs.size < 5 ? 'pozycje' : 'pozycji'}</span>
-            <span className="text-sm font-semibold text-primary">{selectedTotal.toFixed(0)} zł</span>
+            {addingDiscs ? (
+              <>
+                <span className="text-xs text-muted">Nowe: {selectedDiscs.size - alreadyEdIds.size} {(selectedDiscs.size - alreadyEdIds.size) === 1 ? 'pozycja' : (selectedDiscs.size - alreadyEdIds.size) < 5 ? 'pozycje' : 'pozycji'}</span>
+                <span className="text-sm font-semibold text-primary">{newDiscsTotal > 0 ? `+${newDiscsTotal.toFixed(0)} zł` : '0 zł'}</span>
+              </>
+            ) : (
+              <>
+                <span className="text-xs text-muted">Wybrano: {selectedDiscs.size} {selectedDiscs.size === 1 ? 'pozycja' : selectedDiscs.size < 5 ? 'pozycje' : 'pozycji'}</span>
+                <span className="text-sm font-semibold text-primary">{selectedTotal.toFixed(0)} zł</span>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -439,6 +700,16 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
                 {Number(event.price_pln).toFixed(0)} zł
               </span>
             )}
+            {/* Stations from disciplines - only for competitions */}
+            {event.event_type === 'competition' && eventDisciplines.length > 0 && (() => {
+              const totalStations = eventDisciplines.reduce((s, ed) => s + (ed.discipline?.stations_count ?? 1), 0)
+              return (
+                <span className="flex items-center gap-1">
+                  <Target className="w-4 h-4" />
+                  {totalStations} stanowisk
+                </span>
+              )
+            })()}
           </div>
         </div>
 
@@ -474,12 +745,39 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
           )}
 
           {/* Already registered */}
-          {registered && (
+          {registered && mode === null && (
             <div className="space-y-2">
               <div className="w-full text-sm px-4 py-2 bg-success/20 text-success font-semibold rounded-lg flex items-center justify-center gap-1">
                 <Check className="w-4 h-4" />
                 Zapisano
               </div>
+              {/* Show option to add more disciplines */}
+              {member && eventDisciplines.length > 1 && myDiscs.length < eventDisciplines.length && (
+                <button
+                  onClick={() => {
+                    // Pre-select already registered disciplines and their slots
+                    const alreadyEdIds = new Set(myDiscs.map((d: any) => d.edId))
+                    setSelectedDiscs(alreadyEdIds)
+                    // Pre-fill selected slots from existing registrations
+                    const existingSlots = new Map<string, string>()
+                    for (const d of myDiscs as any[]) {
+                      if (d.edId && d.slot) {
+                        // Find the slot ID by matching edId and start time
+                        const matchSlot = slots.find(s =>
+                          s.event_discipline_id === d.edId && s.start_time === d.slot.start
+                        )
+                        if (matchSlot) existingSlots.set(d.edId, matchSlot.id)
+                      }
+                    }
+                    setSelectedSlots(existingSlots)
+                    setAddingDiscs(true)
+                    setMode('member')
+                  }}
+                  className="w-full text-xs px-3 py-1.5 border border-primary/30 text-primary rounded-lg hover:bg-primary/10 transition-colors"
+                >
+                  Dodaj dyscyplinę
+                </button>
+              )}
               {member && (
                 <button
                   onClick={handleCancel}
@@ -493,6 +791,126 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
           )}
         </div>
       </div>
+
+      {/* My registered disciplines */}
+      {registered && mode === null && myDiscs.length > 0 && (
+        <div className="mx-6 mb-4 pb-0">
+          <p className="text-xs text-muted mb-1.5">Twoje dyscypliny:</p>
+          <div className="flex flex-wrap gap-2">
+            {myDiscs.map((d: any, i: number) => (
+              <span key={i} className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-primary/10 text-primary font-medium">
+                {d.name}
+                {!isCourse && d.slot && (
+                  <span className="text-primary/70 flex items-center gap-0.5">
+                    <Clock className="w-3 h-3" />
+                    {format(new Date(d.slot.start), 'HH:mm')} - {format(new Date(d.slot.end), 'HH:mm')}
+                  </span>
+                )}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ---- DATA CONFIRMATION ---- */}
+      {mode === 'confirm_data' && member && (
+        <div className="mt-4 pt-4 border-t border-border">
+          <div className="bg-card border border-border rounded-xl p-4">
+            <p className="text-sm font-semibold mb-3 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-warning" />
+              Potwierdz aktualne dane przed zapisem
+            </p>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm mb-4">
+              <div>
+                <span className="text-xs text-muted">Imie i nazwisko</span>
+                <p className="font-medium">{member.full_name}</p>
+              </div>
+              <div>
+                <span className="text-xs text-muted">PESEL</span>
+                <p className={`font-medium ${!member.pesel ? 'text-warning italic' : ''}`}>{member.pesel || 'brak - uzupelnij w profilu'}</p>
+              </div>
+              <div>
+                <span className="text-xs text-muted">Nr dokumentu</span>
+                <p className={`font-medium ${!member.id_document_number ? 'text-warning italic' : ''}`}>{member.id_document_number || 'brak - uzupelnij w profilu'}</p>
+              </div>
+              <div>
+                <span className="text-xs text-muted">Adres</span>
+                <p className={`font-medium ${!member.address ? 'text-warning italic' : ''}`}>{member.address || 'brak - uzupelnij w profilu'}</p>
+              </div>
+              <div>
+                <span className="text-xs text-muted">Telefon</span>
+                <p className="font-medium">{member.phone || '-'}</p>
+              </div>
+              <div>
+                <span className="text-xs text-muted">Klub</span>
+                <p className="font-medium">{member.club_name}</p>
+              </div>
+              {member.has_weapons_permit && (
+                <div>
+                  <span className="text-xs text-muted">Nr pozwolenia na bron</span>
+                  <p className={`font-medium ${!member.weapon_permit_number ? 'text-warning italic' : ''}`}>{member.weapon_permit_number || 'brak - uzupelnij w profilu'}</p>
+                </div>
+              )}
+              {member.license_number && (
+                <div>
+                  <span className="text-xs text-muted">Nr licencji</span>
+                  <p className="font-medium">{member.license_number}</p>
+                </div>
+              )}
+            </div>
+
+            {(() => {
+              const missing: string[] = []
+              if (!member.pesel) missing.push('PESEL')
+              if (!member.date_of_birth) missing.push('data urodzenia')
+              if (!member.id_document_number) missing.push('nr dokumentu tozsamosci')
+              if (!member.address) missing.push('adres zamieszkania')
+              const hasMissing = missing.length > 0
+
+              return hasMissing ? (
+                <>
+                  <div className="bg-danger/10 border border-danger/30 rounded-lg p-4 mb-3">
+                    <p className="text-sm text-danger font-semibold mb-1">Nie mozna sie zapisac</p>
+                    <p className="text-xs text-danger/80 mb-2">
+                      Rejestracja na zawody wymaga kompletnych danych do listy wejscia na strzelnice. Brakuje: <strong>{missing.join(', ')}</strong>
+                    </p>
+                    <p className="text-xs text-danger/60">Uzupelnij dane w profilu, a nastepnie wroc i zapisz sie na zawody.</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <a
+                      href="/profil"
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-primary text-background text-sm font-semibold rounded-lg hover:bg-primary-dark transition-colors"
+                    >
+                      Uzupelnij dane w profilu
+                    </a>
+                    <button onClick={closeForm} className="px-4 py-2.5 border border-border text-muted text-sm rounded-lg hover:bg-card-hover transition-colors">
+                      Anuluj
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex gap-2">
+                  <button
+                    onClick={confirmDataAndProceed}
+                    className="flex-1 bg-primary text-background text-sm font-semibold py-2.5 rounded-lg hover:bg-primary-dark transition-colors"
+                  >
+                    Dane sa aktualne - kontynuuj
+                  </button>
+                  <a
+                    href="/profil"
+                    className="flex items-center gap-1 px-4 py-2.5 border border-border text-muted text-sm rounded-lg hover:bg-card-hover transition-colors"
+                  >
+                    Zaktualizuj dane
+                  </a>
+                </div>
+              )
+            })()}
+            <button onClick={closeForm} className="mt-2 text-xs text-muted hover:text-foreground transition-colors block w-full text-center">
+              Anuluj
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ---- CHOOSE PATH ---- */}
       {mode === 'choose' && (
@@ -536,7 +954,7 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
       )}
 
       {/* ---- MEMBER CONFIRM ---- */}
-      {mode === 'member' && !registered && (
+      {mode === 'member' && (!registered || addingDiscs) && (
         <div className="mt-4 pt-4 border-t border-border">
           <div className="flex items-center gap-3 mb-3">
             <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
@@ -561,7 +979,9 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
               disabled={registering}
               className="flex-1 text-sm px-4 py-2 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50"
             >
-              {registering ? 'Zapisuję...' : selectedTotal > 0 ? `Potwierdź zapis · ${selectedTotal.toFixed(0)} zł` : 'Potwierdź zapis'}
+              {registering ? 'Zapisuję...' : addingDiscs
+                ? (newDiscsTotal > 0 ? `Potwierdź dopisanie · ${newDiscsTotal.toFixed(0)} zł` : 'Potwierdź dopisanie')
+                : (selectedTotal > 0 ? `Potwierdź zapis · ${selectedTotal.toFixed(0)} zł` : 'Potwierdź zapis')}
             </button>
             <button onClick={closeForm} className="text-sm px-4 py-2 border border-border rounded-lg hover:bg-card-hover transition-colors">
               Anuluj
