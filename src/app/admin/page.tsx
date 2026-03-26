@@ -156,6 +156,7 @@ export default function AdminPage() {
   const [attendanceLoading, setAttendanceLoading] = useState(false)
 
   // On-site registration
+  const [onsiteMode, setOnsiteMode] = useState<'member' | 'guest'>('member')
   const [onsiteMemberId, setOnsiteMemberId] = useState('')
   const [onsiteEventId, setOnsiteEventId] = useState('')
   const [onsiteDisciplineId, setOnsiteDisciplineId] = useState('')
@@ -163,6 +164,9 @@ export default function AdminPage() {
   const [onsiteSaving, setOnsiteSaving] = useState(false)
   const [onsiteMessage, setOnsiteMessage] = useState('')
   const [onsiteMemberSearch, setOnsiteMemberSearch] = useState('')
+  const [onsiteGuestForm, setOnsiteGuestForm] = useState({
+    full_name: '', email: '', phone: '', has_license: false, license_number: '',
+  })
 
   // Form states
   const [eventForm, setEventForm] = useState({
@@ -891,6 +895,75 @@ export default function AdminPage() {
     setOnsiteDisciplineId('')
     setOnsiteSlotId('')
     setOnsiteMemberSearch('')
+    setOnsiteSaving(false)
+    loadAll()
+  }
+
+  async function quickRegisterGuestOnsite() {
+    if (!onsiteGuestForm.full_name || !onsiteEventId || !onsiteDisciplineId) {
+      setOnsiteMessage('Podaj imię i nazwisko gościa, wydarzenie i dyscyplinę.')
+      return
+    }
+    setOnsiteSaving(true)
+    setOnsiteMessage('')
+
+    // Check duplicate by name+event
+    if (onsiteGuestForm.email) {
+      const { data: existing } = await supabase
+        .from('guest_registrations')
+        .select('id')
+        .eq('event_id', onsiteEventId)
+        .eq('email', onsiteGuestForm.email)
+        .maybeSingle()
+      if (existing) {
+        setOnsiteMessage('Gość z tym emailem jest już zapisany na to wydarzenie.')
+        setOnsiteSaving(false)
+        return
+      }
+    }
+
+    const { data: guestReg, error: guestErr } = await supabase
+      .from('guest_registrations')
+      .insert({
+        event_id: onsiteEventId,
+        full_name: onsiteGuestForm.full_name,
+        email: onsiteGuestForm.email || `walk-in-${Date.now()}@brak.pl`,
+        phone: onsiteGuestForm.phone || null,
+        has_license: onsiteGuestForm.has_license,
+        license_number: onsiteGuestForm.has_license ? onsiteGuestForm.license_number || null : null,
+        experience: 'walk-in',
+        status: 'confirmed',
+      })
+      .select('id')
+      .single()
+
+    if (guestErr || !guestReg) {
+      setOnsiteMessage('Błąd rejestracji gościa: ' + (guestErr?.message ?? 'Nieznany błąd'))
+      setOnsiteSaving(false)
+      return
+    }
+
+    // Add discipline
+    const rdPayload: { event_discipline_id: string; guest_registration_id: string; event_discipline_slot_id?: string } = {
+      event_discipline_id: onsiteDisciplineId,
+      guest_registration_id: guestReg.id,
+    }
+    if (onsiteSlotId) {
+      rdPayload.event_discipline_slot_id = onsiteSlotId
+    }
+
+    const { error: rdErr } = await supabase.from('registration_disciplines').insert(rdPayload)
+    if (rdErr) {
+      setOnsiteMessage('Gość zarejestrowany, ale błąd dyscypliny: ' + rdErr.message)
+      setOnsiteSaving(false)
+      loadAll()
+      return
+    }
+
+    setOnsiteMessage('Gość zarejestrowany pomyślnie!')
+    setOnsiteGuestForm({ full_name: '', email: '', phone: '', has_license: false, license_number: '' })
+    setOnsiteDisciplineId('')
+    setOnsiteSlotId('')
     setOnsiteSaving(false)
     loadAll()
   }
@@ -1957,15 +2030,29 @@ export default function AdminPage() {
             if (happeningNow.length === 0) return null
             return (
               <div className="bg-card border border-primary/30 rounded-xl p-4 mb-6">
-                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-primary" />
-                  Rejestracja na miejscu
-                </h3>
-                <p className="text-xs text-muted mb-3">
-                  Szybka rejestracja czlonka na wydarzenie odbywajace sie dzisiaj.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {/* Event selection */}
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-primary" />
+                    Rejestracja na miejscu
+                  </h3>
+                  <div className="flex bg-background rounded-lg p-0.5 border border-border">
+                    <button
+                      onClick={() => { setOnsiteMode('member'); setOnsiteMessage('') }}
+                      className={`px-3 py-1 text-xs rounded-md transition-colors ${onsiteMode === 'member' ? 'bg-primary text-background font-semibold' : 'text-muted hover:text-foreground'}`}
+                    >
+                      Członek
+                    </button>
+                    <button
+                      onClick={() => { setOnsiteMode('guest'); setOnsiteMessage('') }}
+                      className={`px-3 py-1 text-xs rounded-md transition-colors ${onsiteMode === 'guest' ? 'bg-primary text-background font-semibold' : 'text-muted hover:text-foreground'}`}
+                    >
+                      Gość
+                    </button>
+                  </div>
+                </div>
+
+                {/* Row 1: Event + Discipline + Slot (shared) */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                   <div>
                     <label className="text-xs text-muted block mb-1">Wydarzenie</label>
                     <select
@@ -1983,10 +2070,50 @@ export default function AdminPage() {
                       ))}
                     </select>
                   </div>
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Dyscyplina</label>
+                    <select
+                      value={onsiteDisciplineId}
+                      onChange={e => {
+                        setOnsiteDisciplineId(e.target.value)
+                        setOnsiteSlotId('')
+                      }}
+                      className={inputClass + ' text-xs'}
+                      disabled={!onsiteEventId}
+                    >
+                      <option value="">Wybierz...</option>
+                      {onsiteEventId && getEventDiscs(onsiteEventId).map(ed => (
+                        <option key={ed.id} value={ed.id}>{ed.discipline?.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Slot (opcjonalnie)</label>
+                    <select
+                      value={onsiteSlotId}
+                      onChange={e => setOnsiteSlotId(e.target.value)}
+                      className={inputClass + ' text-xs'}
+                      disabled={!onsiteDisciplineId}
+                    >
+                      <option value="">Bez slotu</option>
+                      {onsiteDisciplineId && getSlotsForEventDiscipline(onsiteDisciplineId).map(slot => {
+                        const regCount = getSlotRegistrationCount(slot.id)
+                        return (
+                          <option key={slot.id} value={slot.id} disabled={regCount >= slot.max_participants}>
+                            {new Date(slot.start_time).toLocaleTimeString('pl', { hour: '2-digit', minute: '2-digit' })}
+                            -{new Date(slot.end_time).toLocaleTimeString('pl', { hour: '2-digit', minute: '2-digit' })}
+                            {' '}({regCount}/{slot.max_participants})
+                          </option>
+                        )
+                      })}
+                    </select>
+                  </div>
+                </div>
 
-                  {/* Member search */}
+                {/* Row 2: Member or Guest specific */}
+                {onsiteMode === 'member' ? (
                   <div className="relative">
-                    <label className="text-xs text-muted block mb-1">Czlonek</label>
+                    <label className="text-xs text-muted block mb-1">Członek</label>
                     <input
                       type="text"
                       value={onsiteMemberSearch}
@@ -2020,62 +2147,75 @@ export default function AdminPage() {
                       </div>
                     )}
                   </div>
-
-                  {/* Discipline selection */}
-                  <div>
-                    <label className="text-xs text-muted block mb-1">Dyscyplina</label>
-                    <select
-                      value={onsiteDisciplineId}
-                      onChange={e => {
-                        setOnsiteDisciplineId(e.target.value)
-                        setOnsiteSlotId('')
-                      }}
-                      className={inputClass + ' text-xs'}
-                      disabled={!onsiteEventId}
-                    >
-                      <option value="">Wybierz...</option>
-                      {onsiteEventId && getEventDiscs(onsiteEventId).map(ed => (
-                        <option key={ed.id} value={ed.id}>{ed.discipline?.name}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Slot selection + register button */}
-                  <div>
-                    <label className="text-xs text-muted block mb-1">Slot (opcjonalnie)</label>
-                    <div className="flex gap-2">
-                      <select
-                        value={onsiteSlotId}
-                        onChange={e => setOnsiteSlotId(e.target.value)}
-                        className={inputClass + ' text-xs flex-1'}
-                        disabled={!onsiteDisciplineId}
-                      >
-                        <option value="">Bez slotu</option>
-                        {onsiteDisciplineId && getSlotsForEventDiscipline(onsiteDisciplineId).map(slot => {
-                          const regCount = getSlotRegistrationCount(slot.id)
-                          return (
-                            <option key={slot.id} value={slot.id} disabled={regCount >= slot.max_participants}>
-                              {new Date(slot.start_time).toLocaleTimeString('pl', { hour: '2-digit', minute: '2-digit' })}
-                              -{new Date(slot.end_time).toLocaleTimeString('pl', { hour: '2-digit', minute: '2-digit' })}
-                              {' '}({regCount}/{slot.max_participants})
-                            </option>
-                          )
-                        })}
-                      </select>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div>
+                      <label className="text-xs text-muted block mb-1">Imię i nazwisko *</label>
+                      <input
+                        type="text"
+                        value={onsiteGuestForm.full_name}
+                        onChange={e => setOnsiteGuestForm(f => ({ ...f, full_name: e.target.value }))}
+                        className={inputClass + ' text-xs'}
+                        placeholder="Jan Kowalski"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted block mb-1">Email (opcjonalnie)</label>
+                      <input
+                        type="email"
+                        value={onsiteGuestForm.email}
+                        onChange={e => setOnsiteGuestForm(f => ({ ...f, email: e.target.value }))}
+                        className={inputClass + ' text-xs'}
+                        placeholder="jan@example.com"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted block mb-1">Telefon (opcjonalnie)</label>
+                      <input
+                        type="tel"
+                        value={onsiteGuestForm.phone}
+                        onChange={e => setOnsiteGuestForm(f => ({ ...f, phone: e.target.value }))}
+                        className={inputClass + ' text-xs'}
+                        placeholder="+48 123 456 789"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted block mb-1">Pozwolenie na broń</label>
+                      <div className="flex items-center gap-3 mt-1">
+                        <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={onsiteGuestForm.has_license}
+                            onChange={e => setOnsiteGuestForm(f => ({ ...f, has_license: e.target.checked }))}
+                            className="rounded border-border"
+                          />
+                          Posiada
+                        </label>
+                        {onsiteGuestForm.has_license && (
+                          <input
+                            type="text"
+                            value={onsiteGuestForm.license_number}
+                            onChange={e => setOnsiteGuestForm(f => ({ ...f, license_number: e.target.value }))}
+                            className={inputClass + ' text-xs flex-1'}
+                            placeholder="Nr pozwolenia"
+                          />
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
+
                 <div className="mt-3 flex items-center gap-3">
                   <button
-                    onClick={quickRegisterOnsite}
-                    disabled={onsiteSaving || !onsiteMemberId || !onsiteEventId || !onsiteDisciplineId}
+                    onClick={onsiteMode === 'member' ? quickRegisterOnsite : quickRegisterGuestOnsite}
+                    disabled={onsiteSaving || !onsiteEventId || !onsiteDisciplineId || (onsiteMode === 'member' ? !onsiteMemberId : !onsiteGuestForm.full_name)}
                     className="flex items-center gap-2 px-4 py-2 bg-primary text-background text-xs font-semibold rounded-lg hover:bg-primary-dark disabled:opacity-50 transition-colors"
                   >
                     <UserPlus className="w-3.5 h-3.5" />
-                    {onsiteSaving ? 'Rejestrowanie...' : 'Zarejestruj'}
+                    {onsiteSaving ? 'Rejestrowanie...' : onsiteMode === 'member' ? 'Zarejestruj członka' : 'Zarejestruj gościa'}
                   </button>
                   {onsiteMessage && (
-                    <p className={`text-xs ${onsiteMessage.includes('pomyslnie') ? 'text-green-400' : 'text-danger'}`}>
+                    <p className={`text-xs ${onsiteMessage.includes('pomyślnie') || onsiteMessage.includes('pomyslnie') ? 'text-green-400' : 'text-danger'}`}>
                       {onsiteMessage}
                     </p>
                   )}
