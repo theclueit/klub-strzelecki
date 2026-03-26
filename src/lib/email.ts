@@ -1,4 +1,5 @@
 import { Resend } from 'resend'
+import { createClient } from '@supabase/supabase-js'
 
 const resendKey = process.env.RESEND_API_KEY!
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://klub-strzelecki.vercel.app'
@@ -18,7 +19,7 @@ function formatDate(dateStr: string) {
   })
 }
 
-const safetyRules = `
+const fallbackSafetyRules = `
   <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
     <h3 style="color: #ff6b35; margin: 0 0 12px; font-size: 15px;">&#128680; Zasady bezpieczeństwa na strzelnicy</h3>
     <ol style="margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.8; color: #ccc;">
@@ -46,6 +47,46 @@ const safetyRules = `
   </div>
 `
 
+async function getSafetyRules(): Promise<string> {
+  try {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
+    if (!supabaseUrl || !supabaseKey) return fallbackSafetyRules
+
+    const supabase = createClient(supabaseUrl, supabaseKey)
+    const { data } = await supabase
+      .from('regulations')
+      .select('slug, title, content')
+      .eq('is_active', true)
+      .in('slug', ['zasady_bezpieczenstwa', 'regulamin_strzelnicy'])
+
+    if (!data || data.length === 0) return fallbackSafetyRules
+
+    const safety = data.find(r => r.slug === 'zasady_bezpieczenstwa')
+    const regulations = data.find(r => r.slug === 'regulamin_strzelnicy')
+
+    let html = ''
+    if (safety) {
+      html += `
+        <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
+          <h3 style="color: #ff6b35; margin: 0 0 12px; font-size: 15px;">&#128680; ${safety.title}</h3>
+          <div style="margin: 0; font-size: 13px; line-height: 1.8; color: #ccc;">${safety.content}</div>
+        </div>`
+    }
+    if (regulations) {
+      html += `
+        <div style="background: #1e2a45; border-left: 3px solid #ff6b35; border-radius: 0 8px 8px 0; padding: 16px; margin: 0 0 24px;">
+          <h3 style="color: #fff; margin: 0 0 8px; font-size: 14px;">&#128220; ${regulations.title}</h3>
+          <div style="margin: 0; font-size: 12px; line-height: 1.8; color: #bbb;">${regulations.content}</div>
+        </div>`
+    }
+
+    return html || fallbackSafetyRules
+  } catch {
+    return fallbackSafetyRules
+  }
+}
+
 function emailWrapper(content: string) {
   return `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -72,6 +113,7 @@ export async function sendRegistrationConfirmation(params: {
 }) {
   const resend = getResend()
   const date = formatDate(params.eventDate)
+  const safetyRules = await getSafetyRules()
   const disciplinesList = params.disciplines.length > 0
     ? params.disciplines.map(d => `<li style="margin: 4px 0;">${d}</li>`).join('')
     : '<li>Nie wybrano dyscyplin</li>'
@@ -212,6 +254,7 @@ export async function sendGuestRegistrationConfirmation(params: {
 }) {
   const resend = getResend()
   const date = formatDate(params.eventDate)
+  const safetyRules = await getSafetyRules()
   const disciplinesList = params.disciplines.length > 0
     ? params.disciplines.map(d => `<li style="margin: 4px 0;">${d}</li>`).join('')
     : '<li>Nie wybrano dyscyplin</li>'
