@@ -325,21 +325,25 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
         setRegistering(false)
         return
       }
-      const rows = newEdIds.map(edId => {
+      const discPayload = newEdIds.map(edId => {
         const ed = eventDisciplines.find(e => e.id === edId)
         const isOwn = ownWeapon.has(edId)
         const price = ed ? (isOwn && (ed.own_weapon_price_pln ?? 0) > 0 ? Number(ed.own_weapon_price_pln) : Number(ed.price_pln)) : 0
         return {
           event_discipline_id: edId,
-          member_registration_id: myRegId,
           price_pln: price,
           own_weapon: isOwn,
           ...(selectedSlots.has(edId) ? { event_discipline_slot_id: selectedSlots.get(edId) } : {}),
         }
       })
-      const { error: rdErr } = await supabase.from('registration_disciplines').insert(rows)
-      if (rdErr) {
-        setError('Błąd dodawania dyscyplin: ' + rdErr.message)
+      const res = await fetch('/api/zapisy/dyscypliny', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ registration_id: myRegId, disciplines: discPayload }),
+      })
+      const result = await res.json()
+      if (!res.ok) {
+        setError(result.error || 'Błąd dodawania dyscyplin')
         setRegistering(false)
         return
       }
@@ -350,41 +354,43 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
       return
     }
 
-    // New registration
-    const { data: regData, error: dbError } = await supabase.from('event_registrations').insert({
-      event_id: event.id,
-      member_id: member.id,
-      status: 'registered',
-    }).select('id').single()
+    // New registration via server API (validates capacity)
+    const discPayload = Array.from(selectedDiscs).map(edId => {
+      const ed = eventDisciplines.find(e => e.id === edId)
+      const isOwn = ownWeapon.has(edId)
+      const price = ed ? (isOwn && (ed.own_weapon_price_pln ?? 0) > 0 ? Number(ed.own_weapon_price_pln) : Number(ed.price_pln)) : 0
+      return {
+        event_discipline_id: edId,
+        price_pln: price,
+        own_weapon: isOwn,
+        ...(selectedSlots.has(edId) ? { event_discipline_slot_id: selectedSlots.get(edId) } : {}),
+      }
+    })
 
-    if (dbError) {
+    const res = await fetch('/api/zapisy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event_id: event.id,
+        member_id: member.id,
+        disciplines: discPayload,
+      }),
+    })
+
+    const result = await res.json()
+
+    if (!res.ok) {
       setRegistering(false)
-      if (dbError.code === '23505') {
-        setError('Jesteś już zapisany na to wydarzenie.')
+      setError(result.error || 'Błąd zapisu')
+      if (res.status === 409 && result.registration_id) {
         setRegistered(true)
-      } else {
-        setError('Błąd zapisu: ' + dbError.message)
       }
       return
     }
 
-    // Save selected disciplines with slot IDs
-    if (selectedDiscs.size > 0 && regData) {
-      const rows = Array.from(selectedDiscs).map(edId => {
-        const ed = eventDisciplines.find(e => e.id === edId)
-        const isOwn = ownWeapon.has(edId)
-        const price = ed ? (isOwn && (ed.own_weapon_price_pln ?? 0) > 0 ? Number(ed.own_weapon_price_pln) : Number(ed.price_pln)) : 0
-        return {
-          event_discipline_id: edId,
-          member_registration_id: regData.id,
-          price_pln: price,
-          own_weapon: isOwn,
-          ...(selectedSlots.has(edId) ? { event_discipline_slot_id: selectedSlots.get(edId) } : {}),
-        }
-      })
-      await supabase.from('registration_disciplines').insert(rows)
-      setMyRegId(regData.id)
-      await loadMyDisciplines(regData.id)
+    if (result.registration_id) {
+      setMyRegId(result.registration_id)
+      await loadMyDisciplines(result.registration_id)
     }
 
     setRegistering(false)
@@ -426,42 +432,40 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
     setRegistering(true)
     setError('')
 
-    const { data: regData, error: dbError } = await supabase.from('guest_registrations').insert({
-      event_id: event.id,
-      full_name: guestForm.full_name,
-      email: guestForm.email,
-      phone: guestForm.phone || null,
-      experience: guestForm.experience || null,
-      has_license: guestForm.has_license,
-      license_number: guestForm.has_license && guestForm.license_number ? guestForm.license_number : null,
-      message: guestForm.message || null,
-    }).select('id').single()
-
-    if (dbError) {
-      setRegistering(false)
-      if (dbError.code === '23505') {
-        setError('Ten email jest już zapisany na to wydarzenie.')
-      } else {
-        setError('Błąd zapisu: ' + dbError.message)
+    const discPayload = Array.from(selectedDiscs).map(edId => {
+      const ed = eventDisciplines.find(e => e.id === edId)
+      const isOwn = ownWeapon.has(edId)
+      const price = ed ? (isOwn && (ed.own_weapon_price_pln ?? 0) > 0 ? Number(ed.own_weapon_price_pln) : Number(ed.price_pln)) : 0
+      return {
+        event_discipline_id: edId,
+        price_pln: price,
+        own_weapon: isOwn,
+        ...(selectedSlots.has(edId) ? { event_discipline_slot_id: selectedSlots.get(edId) } : {}),
       }
-      return
-    }
+    })
 
-    // Save selected disciplines with slot IDs
-    if (selectedDiscs.size > 0 && regData) {
-      const rows = Array.from(selectedDiscs).map(edId => {
-        const ed = eventDisciplines.find(e => e.id === edId)
-        const isOwn = ownWeapon.has(edId)
-        const price = ed ? (isOwn && (ed.own_weapon_price_pln ?? 0) > 0 ? Number(ed.own_weapon_price_pln) : Number(ed.price_pln)) : 0
-        return {
-          event_discipline_id: edId,
-          guest_registration_id: regData.id,
-          price_pln: price,
-          own_weapon: isOwn,
-          ...(selectedSlots.has(edId) ? { event_discipline_slot_id: selectedSlots.get(edId) } : {}),
-        }
-      })
-      await supabase.from('registration_disciplines').insert(rows)
+    const res = await fetch('/api/rejestracja', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event_id: event.id,
+        full_name: guestForm.full_name,
+        email: guestForm.email,
+        phone: guestForm.phone || undefined,
+        experience: guestForm.experience || undefined,
+        has_license: guestForm.has_license,
+        license_number: guestForm.has_license && guestForm.license_number ? guestForm.license_number : undefined,
+        message: guestForm.message || undefined,
+        disciplines: discPayload,
+      }),
+    })
+
+    const result = await res.json()
+
+    if (!res.ok) {
+      setRegistering(false)
+      setError(result.error || 'Błąd zapisu')
+      return
     }
 
     setRegistering(false)

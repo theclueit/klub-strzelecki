@@ -10,7 +10,7 @@ export default async function CalendarPage() {
       .from('events')
       .select('*, discipline:disciplines(name)')
       .eq('is_published', true)
-      .order('start_date', { ascending: true }),
+      .order('start_date', { ascending: false }),
     supabase
       .from('event_registrations')
       .select('event_id'),
