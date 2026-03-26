@@ -34,25 +34,6 @@ export default function JudgePage() {
   const [assignedEvents, setAssignedEvents] = useState<AssignedEvent[]>([])
   const [selectedEventId, setSelectedEventId] = useState<string>('')
 
-  // Restore judge session from sessionStorage on mount
-  useEffect(() => {
-    try {
-      const saved = sessionStorage.getItem('judge_session')
-      if (saved) {
-        const { judgeData, eventId } = JSON.parse(saved)
-        if (judgeData) {
-          setJudge(judgeData as Member)
-          setAutoLoginDone(true)
-          if (eventId) {
-            setSelectedEventId(eventId)
-            selectEvent(eventId, judgeData as Member)
-          } else {
-            loadAssignedEvents(judgeData as Member)
-          }
-        }
-      }
-    } catch {}
-  }, [])
 
   // Members & disciplines
   const [members, setMembers] = useState<Member[]>([])
@@ -135,7 +116,7 @@ export default function JudgePage() {
     if (authMember && (authMember.role === 'judge' || authMember.role === 'admin')) {
       setJudge(authMember)
       setAutoLoginDone(true)
-      try { sessionStorage.setItem('judge_session', JSON.stringify({ judgeData: authMember })) } catch {}
+
       loadAssignedEvents(authMember)
     } else if (!authLoading && !autoLoginDone) {
       setAutoLoginDone(true)
@@ -146,7 +127,7 @@ export default function JudgePage() {
     setSelectedEventId(eventId)
     const j = judgeOverride ?? judge
     if (j) {
-      try { sessionStorage.setItem('judge_session', JSON.stringify({ judgeData: j, eventId })) } catch {}
+
     }
     const [regsRes, edRes, resultsRes] = await Promise.all([
       supabase
@@ -487,9 +468,9 @@ export default function JudgePage() {
             <h1 className="text-2xl font-bold">Wybierz zawody</h1>
             <p className="text-sm text-muted">Zalogowany: {judge?.full_name}</p>
           </div>
-          <button onClick={() => { setJudge(null); setStep('login'); try { sessionStorage.removeItem('judge_session') } catch {} }} className="text-muted hover:text-foreground transition-colors" title="Wyloguj z panelu sędziego">
+          <Link href="/" className="text-muted hover:text-foreground transition-colors" title="Wróć na stronę główną">
             <LogOut className="w-5 h-5" />
-          </button>
+          </Link>
         </div>
 
         {assignedEvents.length === 0 ? (
@@ -559,9 +540,9 @@ export default function JudgePage() {
             <button onClick={() => setStep('select-event')} className="text-sm text-muted hover:text-foreground transition-colors px-3 py-1 border border-border rounded-lg">
               Zmień zawody
             </button>
-            <button onClick={() => { setJudge(null); setStep('login'); try { sessionStorage.removeItem('judge_session') } catch {} }} className="text-muted hover:text-foreground transition-colors">
+            <Link href="/" className="text-muted hover:text-foreground transition-colors" title="Wróć na stronę główną">
               <LogOut className="w-5 h-5" />
-            </button>
+            </Link>
           </div>
         </div>
 
