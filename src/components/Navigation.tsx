@@ -24,6 +24,9 @@ export default function Navigation() {
     ...(member?.role === 'judge' || member?.role === 'admin'
       ? [{ href: '/sedzia', label: 'Panel sędziego', icon: Crosshair }]
       : []),
+    ...(member?.role === 'registrar' || member?.role === 'admin'
+      ? [{ href: '/rejestracja', label: 'Rejestracja', icon: UserPlus }]
+      : []),
     ...(member?.role === 'admin'
       ? [{ href: '/admin', label: 'Admin', icon: Shield }]
       : []),

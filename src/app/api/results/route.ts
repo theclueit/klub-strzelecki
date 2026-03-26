@@ -44,6 +44,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: error.message, code: error.code }, { status: 422 })
     }
 
+    // Trigger rankings recalculation in background
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://klub-strzelecki.vercel.app'
+    fetch(`${appUrl}/api/rankings`, { method: 'POST' }).catch(() => {})
+
     return NextResponse.json({ ok: true, id: data?.id })
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Nieznany błąd' }, { status: 500 })

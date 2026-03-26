@@ -12,6 +12,18 @@ const classColors: Record<string, string> = {
   'III': 'bg-muted/20 text-muted',
 }
 
+type RankingRow = {
+  member_id: string
+  discipline_id: string
+  best_score: number
+  avg_score: number
+  events_count: number
+  total_points: number
+  rank_position: number | null
+  member: { id: string; full_name: string; class: string; license_number: string; club_name: string | null } | null
+  discipline: { name: string } | null
+}
+
 type Result = {
   member_id: string
   total_score: number
@@ -50,11 +62,13 @@ type GroupedEvent = {
 }
 
 export default function RankingsClient({
+  rankings,
   results,
   members,
   disciplines,
   eventResults,
 }: {
+  rankings: RankingRow[]
   results: Result[]
   members: Member[]
   disciplines: string[]
@@ -64,28 +78,45 @@ export default function RankingsClient({
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedEvents, setExpandedEvents] = useState<Record<string, boolean>>({})
 
+  const hasRankings = rankings && rankings.length > 0
   const hasResults = results && results.length > 0
 
-  // Aggregate: best score per member per discipline
-  const bestResults: Result[] = []
-  const bestMap = new Map<string, Result>() // key: memberId-discipline
-  for (const r of results) {
-    if (!r.member) continue
-    const key = `${r.member.id}-${r.discipline?.name ?? 'other'}`
-    const existing = bestMap.get(key)
-    if (!existing || r.total_score > existing.total_score) {
-      bestMap.set(key, r)
-    }
-  }
-  bestResults.push(...bestMap.values())
-  bestResults.sort((a, b) => b.total_score - a.total_score)
+  // Use rankings table if available, otherwise fall back to raw results
+  const useRankings = hasRankings
 
-  // Filter results by discipline
+  // Rankings-based filtering
+  const filteredRankings = activeDiscipline === 'all'
+    ? rankings
+    : rankings.filter(r => r.discipline?.name === activeDiscipline)
+
+  const searchedRankings = searchQuery
+    ? filteredRankings.filter(r =>
+        r.member?.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        r.member?.license_number?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        r.member?.club_name?.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : filteredRankings
+
+  // Fallback: Aggregate best score per member per discipline from raw results
+  const bestResults: Result[] = []
+  if (!useRankings) {
+    const bestMap = new Map<string, Result>()
+    for (const r of results) {
+      if (!r.member) continue
+      const key = `${r.member.id}-${r.discipline?.name ?? 'other'}`
+      const existing = bestMap.get(key)
+      if (!existing || r.total_score > existing.total_score) {
+        bestMap.set(key, r)
+      }
+    }
+    bestResults.push(...bestMap.values())
+    bestResults.sort((a, b) => b.total_score - a.total_score)
+  }
+
   const filteredResults = activeDiscipline === 'all'
     ? bestResults
     : bestResults.filter(r => r.discipline?.name === activeDiscipline)
 
-  // Filter by search query
   const searchedResults = searchQuery
     ? filteredResults.filter(r =>
         r.member?.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -189,9 +220,9 @@ export default function RankingsClient({
       )}
 
       {/* Rankings table */}
-      {hasResults ? (
+      {(useRankings || hasResults) ? (
         <div>
-          <h2 className="text-xl font-semibold mb-4">Ranking ogolny</h2>
+          <h2 className="text-xl font-semibold mb-4">Ranking ogólny</h2>
           <div className="bg-card border border-border rounded-xl overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -202,40 +233,76 @@ export default function RankingsClient({
                     <th className="text-left px-6 py-4">Klub</th>
                     <th className="text-left px-6 py-4">Klasa</th>
                     <th className="text-left px-6 py-4">Dyscyplina</th>
-                    <th className="text-right px-6 py-4">Wynik</th>
+                    {useRankings && <th className="text-right px-6 py-4">Zawody</th>}
+                    {useRankings && <th className="text-right px-6 py-4">Śr. wynik</th>}
+                    <th className="text-right px-6 py-4">{useRankings ? 'Najlepszy' : 'Wynik'}</th>
+                    {useRankings && <th className="text-right px-6 py-4">Punkty</th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {searchedResults.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-6 py-8 text-center text-muted">
-                        Brak wynikow pasujacych do wyszukiwania.
-                      </td>
-                    </tr>
-                  ) : (
-                    searchedResults.map((r: Result, i: number) => (
-                      <tr key={r.member_id + '-' + i} className="border-b border-border/50 hover:bg-card-hover transition-colors">
-                        <td className="px-6 py-4 text-lg">
-                          {i < 3 ? medals[i] : <span className="text-muted">{i + 1}</span>}
+                  {useRankings ? (
+                    searchedRankings.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="px-6 py-8 text-center text-muted">
+                          Brak wyników pasujących do wyszukiwania.
                         </td>
-                        <td className="px-6 py-4">
-                          <Link href={`/zawodnicy/${r.member?.id}`} className="font-medium hover:text-primary transition-colors">
-                            {r.member?.full_name ?? 'Nieznany'}
-                          </Link>
-                          <div className="text-xs text-muted">{r.member?.license_number}</div>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-muted">
-                          {r.member?.club_name ?? '-'}
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${classColors[r.member?.class ?? ''] ?? ''}`}>
-                            {r.member?.class}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-muted">{r.discipline?.name ?? '-'}</td>
-                        <td className="px-6 py-4 text-right font-mono font-bold text-lg">{r.total_score}</td>
                       </tr>
-                    ))
+                    ) : (
+                      searchedRankings.map((r: RankingRow, i: number) => (
+                        <tr key={r.member_id + '-' + r.discipline_id} className="border-b border-border/50 hover:bg-card-hover transition-colors">
+                          <td className="px-6 py-4 text-lg">
+                            {(r.rank_position ?? i + 1) <= 3 ? medals[(r.rank_position ?? i + 1) - 1] : <span className="text-muted">{r.rank_position ?? i + 1}</span>}
+                          </td>
+                          <td className="px-6 py-4">
+                            <Link href={`/zawodnicy/${r.member?.id}`} className="font-medium hover:text-primary transition-colors">
+                              {r.member?.full_name ?? 'Nieznany'}
+                            </Link>
+                            <div className="text-xs text-muted">{r.member?.license_number}</div>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-muted">{r.member?.club_name ?? '-'}</td>
+                          <td className="px-6 py-4">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${classColors[r.member?.class ?? ''] ?? ''}`}>
+                              {r.member?.class}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-muted">{r.discipline?.name ?? '-'}</td>
+                          <td className="px-6 py-4 text-right text-sm text-muted">{r.events_count}</td>
+                          <td className="px-6 py-4 text-right text-sm font-mono">{r.avg_score}</td>
+                          <td className="px-6 py-4 text-right font-mono font-bold text-lg">{r.best_score}</td>
+                          <td className="px-6 py-4 text-right font-mono font-bold text-primary">{r.total_points}</td>
+                        </tr>
+                      ))
+                    )
+                  ) : (
+                    searchedResults.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-6 py-8 text-center text-muted">
+                          Brak wyników pasujących do wyszukiwania.
+                        </td>
+                      </tr>
+                    ) : (
+                      searchedResults.map((r: Result, i: number) => (
+                        <tr key={r.member_id + '-' + i} className="border-b border-border/50 hover:bg-card-hover transition-colors">
+                          <td className="px-6 py-4 text-lg">
+                            {i < 3 ? medals[i] : <span className="text-muted">{i + 1}</span>}
+                          </td>
+                          <td className="px-6 py-4">
+                            <Link href={`/zawodnicy/${r.member?.id}`} className="font-medium hover:text-primary transition-colors">
+                              {r.member?.full_name ?? 'Nieznany'}
+                            </Link>
+                            <div className="text-xs text-muted">{r.member?.license_number}</div>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-muted">{r.member?.club_name ?? '-'}</td>
+                          <td className="px-6 py-4">
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${classColors[r.member?.class ?? ''] ?? ''}`}>
+                              {r.member?.class}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm text-muted">{r.discipline?.name ?? '-'}</td>
+                          <td className="px-6 py-4 text-right font-mono font-bold text-lg">{r.total_score}</td>
+                        </tr>
+                      ))
+                    )
                   )}
                 </tbody>
               </table>

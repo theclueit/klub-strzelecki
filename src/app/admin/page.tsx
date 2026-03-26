@@ -1165,9 +1165,23 @@ export default function AdminPage() {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-12">
-      <div className="flex items-center gap-3 mb-8">
-        <Shield className="w-8 h-8 text-primary" />
-        <h1 className="text-3xl font-bold">Panel administracyjny</h1>
+      <div className="flex items-center justify-between mb-8">
+        <div className="flex items-center gap-3">
+          <Shield className="w-8 h-8 text-primary" />
+          <h1 className="text-3xl font-bold">Panel administracyjny</h1>
+        </div>
+        <button
+          onClick={async () => {
+            if (!confirm('Przeliczyć rankingi na podstawie wszystkich wyników?')) return
+            const res = await fetch('/api/rankings', { method: 'POST' })
+            const data = await res.json()
+            alert(data.error ? `Błąd: ${data.error}` : `Rankingi przeliczone (${data.count} pozycji)`)
+          }}
+          className="flex items-center gap-2 px-3 py-2 text-xs border border-border rounded-lg hover:bg-card-hover transition-colors"
+        >
+          <Trophy className="w-3.5 h-3.5" />
+          Przelicz rankingi
+        </button>
       </div>
 
       {/* Tabs */}
@@ -1994,26 +2008,41 @@ export default function AdminPage() {
             </table>
           </div>
 
-          <h3 className="text-md font-semibold mb-3">Awansuj czlonka na sedziego</h3>
-          <div className="bg-card border border-border rounded-xl p-4">
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
-              {allMembers.filter(m => m.role === 'member').map(m => (
-                <button
-                  key={m.id}
-                  onClick={() => promoteToJudge(m.id)}
-                  className="flex items-center gap-3 px-3 py-2 border border-border rounded-lg hover:border-primary/30 transition-colors text-left text-sm"
-                >
-                  <UserPlus className="w-4 h-4 text-muted flex-shrink-0" />
-                  <div>
-                    <div className="font-medium">{m.full_name}</div>
-                    <div className="text-xs text-muted">{m.license_number}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-            {allMembers.filter(m => m.role === 'member').length === 0 && (
-              <p className="text-sm text-muted">Wszyscy czlonkowie maja juz role sedziego lub admina.</p>
-            )}
+          <h3 className="text-md font-semibold mb-3">Zarządzanie rolami</h3>
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-xs text-muted">
+                  <th className="text-left px-4 py-3">Członek</th>
+                  <th className="text-left px-4 py-3">Licencja</th>
+                  <th className="text-left px-4 py-3">Rola</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allMembers.filter(m => m.role !== 'admin').map(m => (
+                  <tr key={m.id} className="border-b border-border/50 hover:bg-card-hover">
+                    <td className="px-4 py-2 font-medium">{m.full_name}</td>
+                    <td className="px-4 py-2 text-muted">{m.license_number || '-'}</td>
+                    <td className="px-4 py-2">
+                      <select
+                        value={m.role}
+                        onChange={async (e) => {
+                          const newRole = e.target.value
+                          if (!confirm(`Zmienić rolę ${m.full_name} na "${newRole}"?`)) return
+                          await supabase.from('members').update({ role: newRole }).eq('id', m.id)
+                          loadAll()
+                        }}
+                        className="bg-background border border-border rounded px-2 py-1 text-xs"
+                      >
+                        <option value="member">Członek</option>
+                        <option value="judge">Sędzia</option>
+                        <option value="registrar">Rejestrator</option>
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

@@ -5,7 +5,11 @@ import RankingsClient from '@/components/RankingsClient'
 export const dynamic = 'force-dynamic'
 
 export default async function RankingsPage() {
-  const [resultsRes, membersRes, disciplinesRes, eventResultsRes] = await Promise.all([
+  const [rankingsRes, resultsRes, membersRes, disciplinesRes, eventResultsRes] = await Promise.all([
+    supabase
+      .from('rankings')
+      .select('*, member:members(id, full_name, class, license_number, club_name), discipline:disciplines(name)')
+      .order('rank_position'),
     supabase
       .from('results')
       .select('member_id, total_score, discipline:disciplines(name), member:members!results_member_id_fkey(id, full_name, class, license_number, club_name)')
@@ -25,6 +29,7 @@ export default async function RankingsPage() {
       .order('total_score', { ascending: false }),
   ])
 
+  const rankings = rankingsRes.data ?? []
   const results = resultsRes.data ?? []
   const members = membersRes.data ?? []
   const disciplines = (disciplinesRes.data ?? []).map((d: { name: string }) => d.name)
@@ -38,6 +43,7 @@ export default async function RankingsPage() {
       </div>
 
       <RankingsClient
+        rankings={rankings as any}
         results={results as any}
         members={members as any}
         disciplines={disciplines}
