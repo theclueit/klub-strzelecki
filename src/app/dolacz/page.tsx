@@ -17,6 +17,7 @@ export default function JoinPage() {
     email: '',
     password: '',
     phone: '',
+    address: '',
     discipline: '',
     experience: '',
     has_license: false,
@@ -74,6 +75,7 @@ export default function JoinPage() {
       full_name: form.full_name,
       email: form.email,
       phone: form.phone || null,
+      address: form.address || null,
       license_number: form.has_license && form.license_number ? form.license_number : null,
       has_weapons_permit: form.has_license,
       club_name: form.club_name || 'Klub Strzelecki Cel',
@@ -221,6 +223,20 @@ export default function JoinPage() {
               placeholder="+48 123 456 789"
               className="w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
             />
+          </div>
+
+          {/* Address */}
+          <div>
+            <label className="text-sm text-muted block mb-1">Adres zamieszkania *</label>
+            <input
+              type="text"
+              required
+              value={form.address}
+              onChange={e => update('address', e.target.value)}
+              placeholder="ul. Strzelecka 1, 00-001 Warszawa"
+              className="w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
+            />
+            <p className="text-xs text-muted mt-1">Wymagany do książki wejścia na strzelnicę</p>
           </div>
 
           {/* Discipline interest */}

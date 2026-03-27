@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
-import { Shield, Calendar, Target, Users, Plus, Trash2, Pencil, Save, X, UserPlus, ChevronDown, ChevronUp, ClipboardList, Check, Ban, Tag, Clock, Printer, MapPin, Zap, Package, AlertTriangle, DollarSign, Eye, Crosshair, Boxes, Wrench, CircleDot, Bell, Mail, Trophy, Hash } from 'lucide-react'
+import { Shield, Calendar, Target, Users, Plus, Trash2, Pencil, Save, X, UserPlus, ChevronDown, ChevronUp, ClipboardList, Check, Ban, Tag, Clock, Printer, MapPin, Zap, Package, AlertTriangle, DollarSign, Eye, Crosshair, Boxes, Wrench, CircleDot, Bell, Mail, Trophy, Hash, History, ArrowDownUp } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import type { Discipline, Member, EventDiscipline, EventDisciplineSlot } from '@/types/database'
 
@@ -68,6 +68,20 @@ interface InventoryItem {
   purchase_date: string | null
   supplier: string | null
   min_stock_level: number
+  location: string | null
+}
+
+interface InventoryTransaction {
+  id: string
+  inventory_item_id: string
+  type: 'in' | 'out' | 'event_out'
+  quantity: number
+  note: string | null
+  event_id: string | null
+  performed_by: string | null
+  created_at: string
+  performer?: { full_name: string }
+  event?: { title: string }
 }
 
 interface Regulation {
@@ -82,7 +96,35 @@ interface Regulation {
   updated_at: string
 }
 
-type Tab = 'events' | 'disciplines' | 'judges' | 'registrations' | 'inventory' | 'regulations'
+interface ShootingLane {
+  id: string
+  name: string
+  length_m: number
+  stations_count: number
+  description: string | null
+  is_active: boolean
+  price_per_hour_pln: number
+}
+
+interface LaneReservation {
+  id: string
+  lane_id: string
+  station_number: number
+  member_id: string | null
+  event_id: string | null
+  reservation_date: string
+  start_time: string
+  end_time: string
+  status: string
+  paid: boolean
+  guest_name: string | null
+  notes: string | null
+  member?: { full_name: string }
+  event?: { title: string }
+  lane?: { name: string }
+}
+
+type Tab = 'events' | 'disciplines' | 'judges' | 'registrations' | 'inventory' | 'regulations' | 'ranges'
 
 export default function AdminPage() {
   const { member, loading } = useAuth()
@@ -128,8 +170,41 @@ export default function AdminPage() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [inventoryForm, setInventoryForm] = useState({
     name: '', category: 'ammunition', description: '', caliber: '', quantity: '0', unit: 'szt.',
-    purchase_price_pln: '0', purchase_date: '', supplier: '', min_stock_level: '0',
+    purchase_price_pln: '0', purchase_date: '', supplier: '', min_stock_level: '0', location: '',
   })
+
+  // Inventory transactions
+  const [showTransactionHistory, setShowTransactionHistory] = useState<string | null>(null)
+  const [transactions, setTransactions] = useState<InventoryTransaction[]>([])
+  const [showStockAdjust, setShowStockAdjust] = useState<InventoryItem | null>(null)
+  const [stockAdjustForm, setStockAdjustForm] = useState({ type: 'in' as 'in' | 'out', quantity: '', note: '' })
+
+  // Online users
+  const [onlineUsers, setOnlineUsers] = useState<{ id: string; full_name: string; role: string; last_seen_at: string }[]>([])
+  const [showOnlineList, setShowOnlineList] = useState(false)
+
+  // Shooting ranges
+  const [shootingLanes, setShootingLanes] = useState<ShootingLane[]>([])
+  const [showLaneForm, setShowLaneForm] = useState(false)
+  const [editingLane, setEditingLane] = useState<ShootingLane | null>(null)
+  const [laneForm, setLaneForm] = useState({ name: '', length_m: '25', stations_count: '5', description: '', price_per_hour_pln: '0', is_active: true, open_time: '08:00', close_time: '20:00' })
+  const [laneReservations, setLaneReservations] = useState<LaneReservation[]>([])
+  const [laneResDate, setLaneResDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [laneResFilter, setLaneResFilter] = useState<string>('all')
+  const [showEventBlockForm, setShowEventBlockForm] = useState(false)
+  const [eventBlockForm, setEventBlockForm] = useState({ lane_id: '', event_id: '', date: '', start_time: '08:00', end_time: '20:00', stations: '' })
+
+  // Range weapons
+  const [rangeWeapons, setRangeWeapons] = useState<{ id: string; name: string; type: string; caliber: string; status: string; description: string | null; inventory_ammo_id: string | null; is_active: boolean }[]>([])
+  const [showWeaponForm, setShowWeaponForm] = useState(false)
+  const [editingWeapon, setEditingWeapon] = useState<any | null>(null)
+  const [weaponForm, setWeaponForm] = useState({ name: '', type: 'pistol', caliber: '', description: '', status: 'draft', inventory_ammo_id: '' })
+
+  // Instructor schedule
+  const [instructorAvailability, setInstructorAvailability] = useState<{ id: string; instructor_id: string; day_of_week: number; start_time: string; end_time: string; is_active: boolean; instructor?: { full_name: string } }[]>([])
+  const [instructorsList, setInstructorsList] = useState<{ id: string; full_name: string }[]>([])
+  const [showInstructorScheduleForm, setShowInstructorScheduleForm] = useState(false)
+  const [instructorScheduleForm, setInstructorScheduleForm] = useState({ instructor_id: '', day_of_week: '1', start_time: '09:00', end_time: '17:00' })
 
   // Attendance list preview
   const [attendancePreview, setAttendancePreview] = useState<{
@@ -183,6 +258,8 @@ export default function AdminPage() {
   })
   // Event disciplines management
   const [editingEventDisciplines, setEditingEventDisciplines] = useState<{ discipline_id: string; price_pln: string; own_weapon_price_pln: string }[]>([])
+  // Osie do zablokowania na zawody
+  const [eventLaneIds, setEventLaneIds] = useState<string[]>([])
 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -192,7 +269,12 @@ export default function AdminPage() {
       router.push('/')
       return
     }
-    if (member?.role === 'admin') loadAll()
+    if (member?.role === 'admin') {
+      loadAll()
+      loadOnlineUsers()
+      const onlineInterval = setInterval(loadOnlineUsers, 30_000)
+      return () => clearInterval(onlineInterval)
+    }
   }, [member, loading])
 
   async function loadAll() {
@@ -222,7 +304,198 @@ export default function AdminPage() {
     setEventSlots((slotsRes.data ?? []) as EventDisciplineSlot[])
     setInventoryItems((invRes.data ?? []) as InventoryItem[])
     setRegulations((regRes.data ?? []) as Regulation[])
+    // Also load shooting lanes (needed for event lane blocking)
+    loadShootingLanes()
   }
+
+  async function loadOnlineUsers() {
+    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+    const { data } = await supabase
+      .from('members')
+      .select('id, full_name, role, last_seen_at')
+      .gte('last_seen_at', fiveMinAgo)
+      .order('last_seen_at', { ascending: false })
+    setOnlineUsers((data ?? []) as typeof onlineUsers)
+  }
+
+  // ---- SHOOTING RANGES ----
+  async function loadShootingLanes() {
+    const { data } = await supabase.from('shooting_lanes').select('*').order('length_m')
+    setShootingLanes((data ?? []) as ShootingLane[])
+  }
+
+  async function loadLaneReservations() {
+    let q = supabase
+      .from('lane_reservations')
+      .select('*, member:members!lane_reservations_member_id_fkey(full_name), event:events(title), lane:shooting_lanes(name)')
+      .eq('reservation_date', laneResDate)
+      .neq('status', 'cancelled')
+      .order('start_time')
+    if (laneResFilter !== 'all') {
+      q = q.eq('lane_id', laneResFilter)
+    }
+    const { data } = await q
+    setLaneReservations((data ?? []) as any[])
+  }
+
+  function openNewLane() {
+    setEditingLane(null)
+    setLaneForm({ name: '', length_m: '25', stations_count: '5', description: '', price_per_hour_pln: '0', is_active: true, open_time: '08:00', close_time: '20:00' })
+    setShowLaneForm(true)
+  }
+
+  function openEditLane(lane: ShootingLane) {
+    setEditingLane(lane)
+    setLaneForm({
+      name: lane.name,
+      length_m: String(lane.length_m),
+      stations_count: String(lane.stations_count),
+      description: lane.description || '',
+      price_per_hour_pln: String(lane.price_per_hour_pln),
+      is_active: lane.is_active,
+      open_time: (lane as any).open_time?.slice(0, 5) || '08:00',
+      close_time: (lane as any).close_time?.slice(0, 5) || '20:00',
+    })
+    setShowLaneForm(true)
+  }
+
+  async function saveLane() {
+    const payload = {
+      name: laneForm.name,
+      length_m: parseInt(laneForm.length_m),
+      stations_count: parseInt(laneForm.stations_count),
+      description: laneForm.description || null,
+      price_per_hour_pln: parseFloat(laneForm.price_per_hour_pln) || 0,
+      is_active: laneForm.is_active,
+      open_time: laneForm.open_time,
+      close_time: laneForm.close_time,
+    }
+    if (editingLane) {
+      await supabase.from('shooting_lanes').update(payload).eq('id', editingLane.id)
+    } else {
+      await supabase.from('shooting_lanes').insert(payload)
+    }
+    setShowLaneForm(false)
+    loadShootingLanes()
+  }
+
+  async function deleteLane(id: string) {
+    if (!confirm('Usunąć tę oś? Wszystkie rezerwacje zostaną usunięte.')) return
+    await supabase.from('shooting_lanes').delete().eq('id', id)
+    loadShootingLanes()
+  }
+
+  async function toggleResPaid(resId: string, paid: boolean) {
+    await supabase.from('lane_reservations').update({ paid }).eq('id', resId)
+    loadLaneReservations()
+  }
+
+  async function cancelReservation(resId: string) {
+    if (!confirm('Anulować tę rezerwację?')) return
+    await supabase.from('lane_reservations').update({ status: 'cancelled' }).eq('id', resId)
+    loadLaneReservations()
+  }
+
+  async function blockLaneForEvent() {
+    const lane = shootingLanes.find(l => l.id === eventBlockForm.lane_id)
+    if (!lane || !eventBlockForm.event_id || !eventBlockForm.date) return
+    const stations = eventBlockForm.stations
+      ? eventBlockForm.stations.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n))
+      : Array.from({ length: lane.stations_count }, (_, i) => i + 1)
+
+    for (const sn of stations) {
+      await supabase.from('lane_reservations').insert({
+        lane_id: eventBlockForm.lane_id,
+        station_number: sn,
+        event_id: eventBlockForm.event_id,
+        reservation_date: eventBlockForm.date,
+        start_time: eventBlockForm.start_time,
+        end_time: eventBlockForm.end_time,
+        status: 'confirmed',
+        paid: true,
+      })
+    }
+    setShowEventBlockForm(false)
+    loadLaneReservations()
+  }
+
+  async function loadRangeWeapons() {
+    const { data } = await supabase.from('range_weapons').select('*').order('type').order('name')
+    setRangeWeapons((data ?? []) as any[])
+  }
+
+  async function saveWeapon() {
+    const payload = {
+      name: weaponForm.name,
+      type: weaponForm.type,
+      caliber: weaponForm.caliber,
+      description: weaponForm.description || null,
+      status: weaponForm.status,
+      is_active: weaponForm.status === 'in_stock',
+      inventory_ammo_id: weaponForm.inventory_ammo_id || null,
+    }
+    if (editingWeapon) {
+      await supabase.from('range_weapons').update(payload).eq('id', editingWeapon.id)
+    } else {
+      await supabase.from('range_weapons').insert(payload)
+    }
+    setShowWeaponForm(false)
+    loadRangeWeapons()
+  }
+
+  async function deleteWeapon(id: string) {
+    if (!confirm('Usunąć tę broń?')) return
+    await supabase.from('range_weapons').delete().eq('id', id)
+    loadRangeWeapons()
+  }
+
+  async function updateWeaponStatus(id: string, status: string) {
+    await supabase.from('range_weapons').update({ status, is_active: status === 'in_stock' }).eq('id', id)
+    loadRangeWeapons()
+  }
+
+  async function loadInstructorSchedule() {
+    const [availRes, instrRes] = await Promise.all([
+      supabase.from('instructor_availability').select('*, instructor:members!instructor_availability_instructor_id_fkey(full_name)').order('instructor_id').order('day_of_week'),
+      supabase.from('members').select('id, full_name').in('role', ['instructor', 'admin']).eq('is_active', true).order('full_name'),
+    ])
+    setInstructorAvailability((availRes.data ?? []) as any[])
+    setInstructorsList((instrRes.data ?? []) as any[])
+  }
+
+  async function saveInstructorSchedule() {
+    const { instructor_id, day_of_week, start_time, end_time } = instructorScheduleForm
+    if (!instructor_id) return
+    await supabase.from('instructor_availability').insert({
+      instructor_id,
+      day_of_week: parseInt(day_of_week),
+      start_time,
+      end_time,
+      is_active: true,
+    })
+    setShowInstructorScheduleForm(false)
+    loadInstructorSchedule()
+  }
+
+  async function deleteInstructorAvailability(id: string) {
+    if (!confirm('Usunąć ten wpis dostępności?')) return
+    await supabase.from('instructor_availability').delete().eq('id', id)
+    loadInstructorSchedule()
+  }
+
+  async function toggleInstructorAvailability(id: string, isActive: boolean) {
+    await supabase.from('instructor_availability').update({ is_active: isActive }).eq('id', id)
+    loadInstructorSchedule()
+  }
+
+  useEffect(() => {
+    if (tab === 'ranges') {
+      loadShootingLanes()
+      loadLaneReservations()
+      loadInstructorSchedule()
+      loadRangeWeapons()
+    }
+  }, [tab, laneResDate, laneResFilter])
 
   // ---- EVENTS ----
   function getEventDiscs(eventId: string) {
@@ -238,6 +511,7 @@ export default function AdminPage() {
       max_participants: '30', is_published: true, allow_target_photos: true,
     })
     setEditingEventDisciplines([])
+    setEventLaneIds([])
     setShowEventForm(true)
     setError('')
   }
@@ -267,6 +541,16 @@ export default function AdminPage() {
       price_pln: ed.price_pln.toString(),
       own_weapon_price_pln: ((ed as any).own_weapon_price_pln ?? 0).toString(),
     })))
+    setEventLaneIds([]) // Will be loaded async
+    // Load existing lane blocks for this event
+    ;(async () => {
+      const { data } = await supabase
+        .from('lane_reservations')
+        .select('lane_id')
+        .eq('event_id', ev.id)
+      const uniqueIds = [...new Set((data ?? []).map(r => r.lane_id))]
+      setEventLaneIds(uniqueIds)
+    })()
     setShowEventForm(true)
     setError('')
   }
@@ -361,6 +645,42 @@ export default function AdminPage() {
             price_pln: parseFloat(d.price_pln) || 0,
             own_weapon_price_pln: parseFloat(d.own_weapon_price_pln) || 0,
           })
+        }
+      }
+
+      // Sync lane reservations for event blocking
+      if (eventLaneIds.length > 0 || editingEvent) {
+        // Remove old event lane blocks
+        await supabase.from('lane_reservations').delete().eq('event_id', eventId)
+
+        // Create new lane blocks for selected lanes
+        if (eventLaneIds.length > 0 && eventForm.start_day) {
+          const eventDate = eventForm.start_day
+          const startTime = eventForm.start_time || '08:00'
+          const endTime = eventForm.end_time || '20:00'
+
+          const laneInserts: any[] = []
+          for (const laneId of eventLaneIds) {
+            const lane = shootingLanes.find(l => l.id === laneId)
+            if (!lane) continue
+            // Block all stations on the lane
+            for (let sn = 1; sn <= lane.stations_count; sn++) {
+              laneInserts.push({
+                lane_id: laneId,
+                station_number: sn,
+                event_id: eventId,
+                reservation_date: eventDate,
+                start_time: startTime,
+                end_time: endTime,
+                status: 'reserved',
+                paid: true,
+                notes: `Blokada na wydarzenie: ${eventForm.title}`,
+              })
+            }
+          }
+          if (laneInserts.length > 0) {
+            await supabase.from('lane_reservations').insert(laneInserts)
+          }
         }
       }
 
@@ -748,7 +1068,7 @@ export default function AdminPage() {
   // ---- INVENTORY CRUD ----
   function openAddInventory() {
     setEditingInventory(null)
-    setInventoryForm({ name: '', category: 'ammunition', description: '', caliber: '', quantity: '0', unit: 'szt.', purchase_price_pln: '0', purchase_date: '', supplier: '', min_stock_level: '0' })
+    setInventoryForm({ name: '', category: 'ammunition', description: '', caliber: '', quantity: '0', unit: 'szt.', purchase_price_pln: '0', purchase_date: '', supplier: '', min_stock_level: '0', location: '' })
     setShowInventoryForm(true)
   }
   function openEditInventory(item: InventoryItem) {
@@ -757,6 +1077,7 @@ export default function AdminPage() {
       name: item.name, category: item.category, description: item.description || '', caliber: item.caliber || '',
       quantity: String(item.quantity), unit: item.unit, purchase_price_pln: String(item.purchase_price_pln),
       purchase_date: item.purchase_date || '', supplier: item.supplier || '', min_stock_level: String(item.min_stock_level),
+      location: item.location || '',
     })
     setShowInventoryForm(true)
   }
@@ -773,6 +1094,7 @@ export default function AdminPage() {
       purchase_date: inventoryForm.purchase_date || null,
       supplier: inventoryForm.supplier || null,
       min_stock_level: parseInt(inventoryForm.min_stock_level) || 0,
+      location: inventoryForm.location || null,
     }
     if (editingInventory) {
       await supabase.from('inventory_items').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', editingInventory.id)
@@ -785,6 +1107,87 @@ export default function AdminPage() {
   async function deleteInventory(id: string) {
     if (!confirm('Usunąć pozycję z magazynu?')) return
     await supabase.from('inventory_items').delete().eq('id', id)
+    loadAll()
+  }
+
+  async function loadTransactions(itemId: string) {
+    setShowTransactionHistory(itemId)
+    const { data } = await supabase
+      .from('inventory_transactions')
+      .select('*, performer:members!inventory_transactions_performed_by_fkey(full_name), event:events!inventory_transactions_event_id_fkey(title)')
+      .eq('inventory_item_id', itemId)
+      .order('created_at', { ascending: false })
+    setTransactions((data ?? []) as InventoryTransaction[])
+  }
+
+  async function saveStockAdjust(e: React.FormEvent) {
+    e.preventDefault()
+    if (!showStockAdjust || !member) return
+    const qty = parseInt(stockAdjustForm.quantity)
+    if (!qty || qty <= 0) return
+    const item = showStockAdjust
+    const newQty = stockAdjustForm.type === 'in' ? item.quantity + qty : Math.max(0, item.quantity - qty)
+    await supabase.from('inventory_transactions').insert({
+      inventory_item_id: item.id,
+      type: stockAdjustForm.type,
+      quantity: qty,
+      note: stockAdjustForm.note || null,
+      performed_by: member.id,
+    })
+    await supabase.from('inventory_items').update({ quantity: newQty, updated_at: new Date().toISOString() }).eq('id', item.id)
+    setShowStockAdjust(null)
+    loadAll()
+  }
+
+  async function settleEventMaterials(eventId: string) {
+    // Check if already settled
+    const { data: existing } = await supabase.from('inventory_transactions').select('id').eq('event_id', eventId).eq('type', 'event_out').limit(1)
+    if (existing && existing.length > 0) {
+      alert('Te zawody zostały już rozliczone.')
+      return
+    }
+    if (!confirm('Rozliczyć materiały dla tych zawodów? Ilości zostaną automatycznie odjęte z magazynu.')) return
+    const summary = getEventMaterials(eventId)
+    if (!summary) return
+    const errors: string[] = []
+    // Deduct ammunition by caliber
+    for (const [caliber, info] of summary.totals.byCaliberAmmo.entries()) {
+      if (!caliber || caliber === '-') continue
+      const matchingItems = inventoryItems.filter(i => i.category === 'ammunition' && i.caliber === caliber)
+      if (matchingItems.length === 0) { errors.push(`Brak amunicji ${caliber} w magazynie`); continue }
+      let remaining = info.total
+      for (const item of matchingItems) {
+        if (remaining <= 0) break
+        const deduct = Math.min(remaining, item.quantity)
+        await supabase.from('inventory_transactions').insert({
+          inventory_item_id: item.id, type: 'event_out', quantity: deduct,
+          note: `Zużycie na zawodach`, event_id: eventId, performed_by: member?.id,
+        })
+        await supabase.from('inventory_items').update({ quantity: item.quantity - deduct, updated_at: new Date().toISOString() }).eq('id', item.id)
+        remaining -= deduct
+      }
+      if (remaining > 0) errors.push(`Brakuje ${remaining} szt. amunicji ${caliber}`)
+    }
+    // Deduct targets
+    for (const [targetName, qty] of summary.totals.byTargetTarcze.entries()) {
+      if (!targetName || targetName === '-') continue
+      const matchingItems = inventoryItems.filter(i => i.category === 'targets' && i.name.toLowerCase().includes(targetName.toLowerCase()))
+      if (matchingItems.length === 0) { errors.push(`Brak tarcz "${targetName}" w magazynie`); continue }
+      let remaining = qty
+      for (const item of matchingItems) {
+        if (remaining <= 0) break
+        const deduct = Math.min(remaining, item.quantity)
+        await supabase.from('inventory_transactions').insert({
+          inventory_item_id: item.id, type: 'event_out', quantity: deduct,
+          note: `Zużycie na zawodach`, event_id: eventId, performed_by: member?.id,
+        })
+        await supabase.from('inventory_items').update({ quantity: item.quantity - deduct, updated_at: new Date().toISOString() }).eq('id', item.id)
+        remaining -= deduct
+      }
+      if (remaining > 0) errors.push(`Brakuje ${remaining} szt. tarcz "${targetName}"`)
+    }
+    if (errors.length > 0) alert('Rozliczono z uwagami:\n' + errors.join('\n'))
+    else alert('Materiały rozliczone pomyślnie!')
     loadAll()
   }
 
@@ -1284,14 +1687,58 @@ export default function AdminPage() {
         </button>
       </div>
 
+      {/* Online users */}
+      <div className="mb-6">
+        <button
+          onClick={() => setShowOnlineList(!showOnlineList)}
+          className="flex items-center gap-2 px-4 py-2.5 bg-card border border-border rounded-xl hover:bg-card-hover transition-colors w-full sm:w-auto"
+        >
+          <span className="w-2.5 h-2.5 rounded-full bg-success animate-pulse" />
+          <span className="text-sm font-medium">
+            {onlineUsers.length} {onlineUsers.length === 1 ? 'osoba online' : onlineUsers.length < 5 ? 'osoby online' : 'osób online'}
+          </span>
+          {showOnlineList ? <ChevronUp className="w-4 h-4 text-muted" /> : <ChevronDown className="w-4 h-4 text-muted" />}
+        </button>
+        {showOnlineList && (
+          <div className="mt-2 bg-card border border-border rounded-xl overflow-hidden">
+            {onlineUsers.length === 0 ? (
+              <p className="text-sm text-muted px-4 py-3">Brak zalogowanych użytkowników.</p>
+            ) : (
+              <div className="divide-y divide-border/50">
+                {onlineUsers.map(u => {
+                  const roleLabels: Record<string, string> = { admin: 'Admin', judge: 'Sędzia', member: 'Członek', registrar: 'Rejestrator', range_registrar: 'Rej. strzelnica' }
+                  const roleColors: Record<string, string> = { admin: 'bg-primary/20 text-primary', judge: 'bg-blue-500/20 text-blue-400', member: 'bg-gray-500/20 text-gray-400', registrar: 'bg-purple-500/20 text-purple-400', range_registrar: 'bg-orange-500/20 text-orange-400' }
+                  const ago = Math.round((Date.now() - new Date(u.last_seen_at).getTime()) / 60_000)
+                  return (
+                    <div key={u.id} className="flex items-center justify-between px-4 py-2.5">
+                      <div className="flex items-center gap-3">
+                        <span className="w-2 h-2 rounded-full bg-success" />
+                        <span className="text-sm font-medium">{u.full_name}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${roleColors[u.role] || roleColors.member}`}>
+                          {roleLabels[u.role] || u.role}
+                        </span>
+                      </div>
+                      <span className="text-xs text-muted">
+                        {ago < 1 ? 'teraz' : `${ago} min temu`}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Tabs */}
       <div className="flex gap-2 mb-8 border-b border-border overflow-x-auto">
         {[
           { key: 'events' as Tab, label: 'Zawody / Wydarzenia', icon: Calendar },
           { key: 'disciplines' as Tab, label: 'Dyscypliny', icon: Target },
           { key: 'registrations' as Tab, label: 'Zgloszenia', icon: ClipboardList },
-          { key: 'judges' as Tab, label: 'Sedziowie', icon: Users },
+          { key: 'judges' as Tab, label: 'Uprawnienia', icon: Users },
           { key: 'inventory' as Tab, label: 'Magazyn', icon: Package },
+          { key: 'ranges' as Tab, label: 'Strzelnica', icon: Crosshair },
           { key: 'regulations' as Tab, label: 'Regulaminy', icon: Shield },
         ].map(({ key, label, icon: Icon }) => (
           <button
@@ -1721,6 +2168,12 @@ export default function AdminPage() {
                                 ))}
                               </div>
                             </div>
+                            <div className="mt-4 pt-3 border-t border-border/50">
+                              <button onClick={() => settleEventMaterials(ev.id)} className="flex items-center gap-2 bg-primary/10 text-primary border border-primary/30 px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary/20 transition-colors">
+                                <Package className="w-4 h-4" />
+                                Rozlicz materiały z magazynu
+                              </button>
+                            </div>
                           </div>
                         )
                       })()}
@@ -1871,6 +2324,37 @@ export default function AdminPage() {
                       </div>
                     )}
                   </div>
+
+                  {/* ---- Lane blocking for events ---- */}
+                  {shootingLanes.length > 0 && (
+                    <div>
+                      <label className="text-sm font-medium flex items-center gap-1 mb-2">
+                        <MapPin className="w-4 h-4 text-primary" />
+                        Blokada osi na wydarzenie
+                      </label>
+                      <p className="text-xs text-muted mb-2">Wybrane osie zostaną automatycznie zarezerwowane na czas wydarzenia.</p>
+                      <div className="space-y-1.5">
+                        {shootingLanes.filter(l => l.is_active).map(lane => (
+                          <label key={lane.id} className="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg border border-border hover:bg-card-hover transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={eventLaneIds.includes(lane.id)}
+                              onChange={e => {
+                                if (e.target.checked) {
+                                  setEventLaneIds(prev => [...prev, lane.id])
+                                } else {
+                                  setEventLaneIds(prev => prev.filter(id => id !== lane.id))
+                                }
+                              }}
+                              className="w-4 h-4 accent-primary"
+                            />
+                            <span className="text-sm">{lane.name}</span>
+                            <span className="text-xs text-muted ml-auto">{lane.length_m}m · {lane.stations_count} stanowisk</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={eventForm.is_published} onChange={e => setEventForm(f => ({ ...f, is_published: e.target.checked }))} className="w-4 h-4 accent-primary" />
@@ -2084,79 +2568,329 @@ export default function AdminPage() {
       {/* ============ JUDGES TAB ============ */}
       {tab === 'judges' && (
         <div>
-          <h2 className="text-lg font-semibold mb-4">Sedziowie ({judges.length})</h2>
+          <h2 className="text-lg font-semibold mb-6">Uprawnienia i role ({allMembers.length} członków)</h2>
 
-          <div className="bg-card border border-border rounded-xl overflow-hidden mb-8">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border text-sm text-muted">
-                  <th className="text-left px-4 py-3">Nazwisko</th>
-                  <th className="text-left px-4 py-3">Licencja</th>
-                  <th className="text-left px-4 py-3">Rola</th>
-                  <th className="text-left px-4 py-3">Przypisane zawody</th>
-                </tr>
-              </thead>
-              <tbody>
-                {judges.map(j => {
-                  const assignedEvents = eventJudges
-                    .filter(ej => ej.judge_id === j.id)
-                    .map(ej => events.find(ev => ev.id === ej.event_id))
-                    .filter(Boolean)
-                  return (
-                    <tr key={j.id} className="border-b border-border/50 hover:bg-card-hover">
-                      <td className="px-4 py-3 font-medium text-sm">{j.full_name}</td>
-                      <td className="px-4 py-3 text-sm text-muted">{j.license_number}</td>
-                      <td className="px-4 py-3">
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${j.role === 'admin' ? 'bg-primary/20 text-primary' : 'bg-blue-500/20 text-blue-400'}`}>
-                          {j.role}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-muted">
-                        {assignedEvents.length === 0 ? '-' : assignedEvents.map(e => e!.title).join(', ')}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+          {/* Sekcja: Administratorzy */}
+          {(() => {
+            const admins = allMembers.filter(m => m.role === 'admin')
+            return admins.length > 0 && (
+              <div className="mb-6">
+                <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-primary" />
+                  Administratorzy ({admins.length})
+                </h3>
+                <div className="bg-card border border-primary/20 rounded-xl overflow-hidden">
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {admins.map(m => (
+                        <tr key={m.id} className="border-b border-border/50 last:border-0">
+                          <td className="px-4 py-3 font-medium">{m.full_name}</td>
+                          <td className="px-4 py-3 text-muted">{m.email}</td>
+                          <td className="px-4 py-3 text-muted">{m.license_number || '-'}</td>
+                          <td className="px-4 py-3">
+                            <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-primary/20 text-primary">Admin</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })()}
 
-          <h3 className="text-md font-semibold mb-3">Zarządzanie rolami</h3>
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-xs text-muted">
-                  <th className="text-left px-4 py-3">Członek</th>
-                  <th className="text-left px-4 py-3">Licencja</th>
-                  <th className="text-left px-4 py-3">Rola</th>
-                </tr>
-              </thead>
-              <tbody>
-                {allMembers.filter(m => m.role !== 'admin').map(m => (
-                  <tr key={m.id} className="border-b border-border/50 hover:bg-card-hover">
-                    <td className="px-4 py-2 font-medium">{m.full_name}</td>
-                    <td className="px-4 py-2 text-muted">{m.license_number || '-'}</td>
-                    <td className="px-4 py-2">
-                      <select
-                        value={m.role}
-                        onChange={async (e) => {
-                          const newRole = e.target.value
-                          if (!confirm(`Zmienić rolę ${m.full_name} na "${newRole}"?`)) return
-                          await supabase.from('members').update({ role: newRole }).eq('id', m.id)
-                          loadAll()
-                        }}
-                        className="bg-background border border-border rounded px-2 py-1 text-xs"
-                      >
-                        <option value="member">Członek</option>
-                        <option value="judge">Sędzia</option>
-                        <option value="registrar">Rejestrator</option>
-                      </select>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/* Sekcja: Sędziowie */}
+          {(() => {
+            const judgesList = allMembers.filter(m => m.role === 'judge')
+            return (
+              <div className="mb-6">
+                <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                  <Crosshair className="w-4 h-4 text-blue-500" />
+                  Sędziowie ({judgesList.length})
+                </h3>
+                <div className="bg-card border border-border rounded-xl overflow-hidden">
+                  {judgesList.length === 0 ? (
+                    <p className="px-4 py-4 text-sm text-muted">Brak sędziów. Zmień rolę członka poniżej.</p>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border text-xs text-muted">
+                          <th className="text-left px-4 py-2">Imię i nazwisko</th>
+                          <th className="text-left px-4 py-2">Licencja</th>
+                          <th className="text-left px-4 py-2">Przypisane zawody</th>
+                          <th className="text-left px-4 py-2 w-28">Rola</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {judgesList.map(j => {
+                          const assignedEvents = eventJudges
+                            .filter(ej => ej.judge_id === j.id)
+                            .map(ej => events.find(ev => ev.id === ej.event_id))
+                            .filter(Boolean)
+                          return (
+                            <tr key={j.id} className="border-b border-border/50 last:border-0 hover:bg-card-hover">
+                              <td className="px-4 py-2.5 font-medium">{j.full_name}</td>
+                              <td className="px-4 py-2.5 text-muted">{j.license_number || '-'}</td>
+                              <td className="px-4 py-2.5 text-muted text-xs">
+                                {assignedEvents.length === 0 ? '-' : assignedEvents.map(e => e!.title).join(', ')}
+                              </td>
+                              <td className="px-4 py-2.5">
+                                <select
+                                  value={j.role}
+                                  onChange={async (e) => {
+                                    const newRole = e.target.value
+                                    if (!confirm(`Zmienić rolę ${j.full_name} na "${newRole}"?`)) return
+                                    await supabase.from('members').update({ role: newRole }).eq('id', j.id)
+                                    loadAll()
+                                  }}
+                                  className="bg-background border border-border rounded px-2 py-1 text-xs"
+                                >
+                                  <option value="member">Członek</option>
+                                  <option value="judge">Sędzia</option>
+                                  <option value="registrar">Rejestrator</option>
+                                  <option value="range_registrar">Rej. strzelnica</option>
+                                  <option value="instructor">Instruktor</option>
+                                </select>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Sekcja: Rejestratorzy */}
+          {(() => {
+            const registrars = allMembers.filter(m => m.role === 'registrar')
+            return registrars.length > 0 && (
+              <div className="mb-6">
+                <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                  <ClipboardList className="w-4 h-4 text-green-500" />
+                  Rejestratorzy ({registrars.length})
+                </h3>
+                <div className="bg-card border border-border rounded-xl overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-xs text-muted">
+                        <th className="text-left px-4 py-2">Imię i nazwisko</th>
+                        <th className="text-left px-4 py-2">Email</th>
+                        <th className="text-left px-4 py-2 w-28">Rola</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {registrars.map(m => (
+                        <tr key={m.id} className="border-b border-border/50 last:border-0 hover:bg-card-hover">
+                          <td className="px-4 py-2.5 font-medium">{m.full_name}</td>
+                          <td className="px-4 py-2.5 text-muted">{m.email}</td>
+                          <td className="px-4 py-2.5">
+                            <select
+                              value={m.role}
+                              onChange={async (e) => {
+                                const newRole = e.target.value
+                                if (!confirm(`Zmienić rolę ${m.full_name} na "${newRole}"?`)) return
+                                await supabase.from('members').update({ role: newRole }).eq('id', m.id)
+                                loadAll()
+                              }}
+                              className="bg-background border border-border rounded px-2 py-1 text-xs"
+                            >
+                              <option value="member">Członek</option>
+                              <option value="judge">Sędzia</option>
+                              <option value="registrar">Rejestrator</option>
+                                  <option value="range_registrar">Rej. strzelnica</option>
+                                  <option value="instructor">Instruktor</option>
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Sekcja: Rejestratorzy strzelnicowi */}
+          {(() => {
+            const rangeRegs = allMembers.filter(m => m.role === 'range_registrar')
+            return rangeRegs.length > 0 && (
+              <div className="mb-6">
+                <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                  <Crosshair className="w-4 h-4 text-orange-500" />
+                  Rejestratorzy strzelnicowi ({rangeRegs.length})
+                </h3>
+                <div className="bg-card border border-border rounded-xl overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-xs text-muted">
+                        <th className="text-left px-4 py-2">Imię i nazwisko</th>
+                        <th className="text-left px-4 py-2">Email</th>
+                        <th className="text-left px-4 py-2 w-28">Rola</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rangeRegs.map(m => (
+                        <tr key={m.id} className="border-b border-border/50 last:border-0 hover:bg-card-hover">
+                          <td className="px-4 py-2.5 font-medium">{m.full_name}</td>
+                          <td className="px-4 py-2.5 text-muted">{m.email}</td>
+                          <td className="px-4 py-2.5">
+                            <select
+                              value={m.role}
+                              onChange={async (e) => {
+                                const newRole = e.target.value
+                                if (!confirm(`Zmienić rolę ${m.full_name} na "${newRole}"?`)) return
+                                await supabase.from('members').update({ role: newRole }).eq('id', m.id)
+                                loadAll()
+                              }}
+                              className="bg-background border border-border rounded px-2 py-1 text-xs"
+                            >
+                              <option value="member">Członek</option>
+                              <option value="judge">Sędzia</option>
+                              <option value="registrar">Rejestrator</option>
+                              <option value="range_registrar">Rej. strzelnica</option>
+                                  <option value="instructor">Instruktor</option>
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Sekcja: Instruktorzy */}
+          {(() => {
+            const instructors = allMembers.filter(m => m.role === 'instructor')
+            return instructors.length > 0 && (
+              <div className="mb-6">
+                <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                  <Target className="w-4 h-4 text-purple-500" />
+                  Instruktorzy ({instructors.length})
+                </h3>
+                <div className="bg-card border border-border rounded-xl overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-xs text-muted">
+                        <th className="text-left px-4 py-2">Imię i nazwisko</th>
+                        <th className="text-left px-4 py-2">Email</th>
+                        <th className="text-left px-4 py-2">Licencja instruktora</th>
+                        <th className="text-left px-4 py-2">Prow. strzelanie</th>
+                        <th className="text-left px-4 py-2 w-28">Rola</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {instructors.map(m => (
+                        <tr key={m.id} className="border-b border-border/50 last:border-0 hover:bg-card-hover">
+                          <td className="px-4 py-2.5 font-medium">{m.full_name}</td>
+                          <td className="px-4 py-2.5 text-muted">{m.email}</td>
+                          <td className="px-4 py-2.5">
+                            <input
+                              type="text"
+                              defaultValue={(m as any).instructor_license || ''}
+                              placeholder="Nr licencji..."
+                              onBlur={async (e) => {
+                                const val = e.target.value.trim()
+                                await supabase.from('members').update({ instructor_license: val || null }).eq('id', m.id)
+                              }}
+                              className="bg-background border border-border rounded px-2 py-1 text-xs w-full max-w-[140px]"
+                            />
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <label className="flex items-center gap-1.5 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                defaultChecked={(m as any).has_shooting_leader || false}
+                                onChange={async (e) => {
+                                  await supabase.from('members').update({ has_shooting_leader: e.target.checked }).eq('id', m.id)
+                                }}
+                                className="w-3.5 h-3.5 accent-green-500"
+                              />
+                              <span className="text-xs text-muted">Prow. strzelanie</span>
+                            </label>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <select
+                              value={m.role}
+                              onChange={async (e) => {
+                                const newRole = e.target.value
+                                if (!confirm(`Zmienić rolę ${m.full_name} na "${newRole}"?`)) return
+                                await supabase.from('members').update({ role: newRole }).eq('id', m.id)
+                                loadAll()
+                              }}
+                              className="bg-background border border-border rounded px-2 py-1 text-xs"
+                            >
+                              <option value="member">Członek</option>
+                              <option value="judge">Sędzia</option>
+                              <option value="registrar">Rejestrator</option>
+                              <option value="range_registrar">Rej. strzelnica</option>
+                              <option value="instructor">Instruktor</option>
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Sekcja: Członkowie (bez specjalnych uprawnień) */}
+          {(() => {
+            const members = allMembers.filter(m => m.role === 'member')
+            return (
+              <div>
+                <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                  <Users className="w-4 h-4 text-muted" />
+                  Członkowie ({members.length})
+                </h3>
+                <div className="bg-card border border-border rounded-xl overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-xs text-muted">
+                        <th className="text-left px-4 py-2">Imię i nazwisko</th>
+                        <th className="text-left px-4 py-2">Email</th>
+                        <th className="text-left px-4 py-2">Licencja</th>
+                        <th className="text-left px-4 py-2 w-28">Rola</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {members.map(m => (
+                        <tr key={m.id} className="border-b border-border/50 last:border-0 hover:bg-card-hover">
+                          <td className="px-4 py-2.5 font-medium">{m.full_name}</td>
+                          <td className="px-4 py-2.5 text-muted">{m.email}</td>
+                          <td className="px-4 py-2.5 text-muted">{m.license_number || '-'}</td>
+                          <td className="px-4 py-2.5">
+                            <select
+                              value={m.role}
+                              onChange={async (e) => {
+                                const newRole = e.target.value
+                                if (!confirm(`Zmienić rolę ${m.full_name} na "${newRole}"?`)) return
+                                await supabase.from('members').update({ role: newRole }).eq('id', m.id)
+                                loadAll()
+                              }}
+                              className="bg-background border border-border rounded px-2 py-1 text-xs"
+                            >
+                              <option value="member">Członek</option>
+                              <option value="judge">Sędzia</option>
+                              <option value="registrar">Rejestrator</option>
+                                  <option value="range_registrar">Rej. strzelnica</option>
+                                  <option value="instructor">Instruktor</option>
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })()}
         </div>
       )}
 
@@ -2426,8 +3160,25 @@ export default function AdminPage() {
                             <td className="px-4 py-2 text-muted">{total > 0 ? `${total.toFixed(0)} zl` : '-'}</td>
                             <td className="px-4 py-2">
                               <span className="text-xs px-2 py-0.5 rounded-full bg-success/20 text-success">{r.status}</span>
+                              {(r as any).paid
+                                ? <span className="text-xs px-2 py-0.5 rounded-full bg-success/20 text-success ml-1">Opłacono</span>
+                                : total > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-warning/20 text-warning ml-1">Nieopłacono</span>
+                              }
                             </td>
-                            <td className="px-4 py-2 text-right">-</td>
+                            <td className="px-4 py-2 text-right">
+                              {!(r as any).paid && total > 0 && (
+                                <button
+                                  onClick={async () => {
+                                    if (!confirm(`Oznaczyć jako opłacone? (${(r.member as any)?.full_name})`)) return
+                                    await supabase.from('event_registrations').update({ paid: true }).eq('id', r.id)
+                                    loadAll()
+                                  }}
+                                  className="text-xs px-2 py-1 bg-success/10 text-success border border-success/30 rounded-lg hover:bg-success/20 transition-colors"
+                                >
+                                  Oznacz zapłacone
+                                </button>
+                              )}
+                            </td>
                           </tr>
                         )
                       })}
@@ -2652,16 +3403,23 @@ export default function AdminPage() {
                                 <span>Stan: <span className="text-foreground font-medium">{item.quantity.toLocaleString('pl')} {item.unit}</span></span>
                                 <span>Cena zakupu: <span className="text-foreground">{Number(item.purchase_price_pln).toFixed(2)} zl/{item.unit}</span></span>
                                 <span>Wartosc: <span className="text-foreground font-medium">{value.toLocaleString('pl', { minimumFractionDigits: 2 })} zl</span></span>
+                                {item.location && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{item.location}</span>}
                                 {item.purchase_date && <span>Zakup: {new Date(item.purchase_date).toLocaleDateString('pl')}</span>}
                                 {item.supplier && <span>Dostawca: {item.supplier}</span>}
                                 {item.min_stock_level > 0 && <span>Min. stan: {item.min_stock_level} {item.unit}</span>}
                               </div>
                             </div>
                             <div className="flex items-center gap-1 flex-shrink-0">
+                              <button onClick={() => { setShowStockAdjust(item); setStockAdjustForm({ type: 'in', quantity: '', note: '' }) }} className="p-2 text-muted hover:text-success rounded-lg hover:bg-card-hover" title="Wydaj / Przyjmij">
+                                <ArrowDownUp className="w-4 h-4" />
+                              </button>
+                              <button onClick={() => loadTransactions(item.id)} className="p-2 text-muted hover:text-primary rounded-lg hover:bg-card-hover" title="Historia">
+                                <History className="w-4 h-4" />
+                              </button>
                               <button onClick={() => openEditInventory(item)} className="p-2 text-muted hover:text-primary rounded-lg hover:bg-card-hover" title="Edytuj">
                                 <Pencil className="w-4 h-4" />
                               </button>
-                              <button onClick={() => deleteInventory(item.id)} className="p-2 text-muted hover:text-danger rounded-lg hover:bg-card-hover" title="Usun">
+                              <button onClick={() => deleteInventory(item.id)} className="p-2 text-muted hover:text-danger rounded-lg hover:bg-card-hover" title="Usuń">
                                 <Trash2 className="w-4 h-4" />
                               </button>
                             </div>
@@ -2724,9 +3482,15 @@ export default function AdminPage() {
                       <input type="date" value={inventoryForm.purchase_date} onChange={e => setInventoryForm(f => ({ ...f, purchase_date: e.target.value }))} className={inputClass} />
                     </div>
                   </div>
-                  <div>
-                    <label className="text-xs text-muted block mb-1">Dostawca</label>
-                    <input value={inventoryForm.supplier} onChange={e => setInventoryForm(f => ({ ...f, supplier: e.target.value }))} placeholder="np. Kolter Wrocław" className={inputClass} />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-muted block mb-1">Dostawca</label>
+                      <input value={inventoryForm.supplier} onChange={e => setInventoryForm(f => ({ ...f, supplier: e.target.value }))} placeholder="np. Kolter Wrocław" className={inputClass} />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted block mb-1">Lokalizacja</label>
+                      <input value={inventoryForm.location} onChange={e => setInventoryForm(f => ({ ...f, location: e.target.value }))} placeholder="np. Magazyn A, Szafa 3" className={inputClass} />
+                    </div>
                   </div>
                   <div>
                     <label className="text-xs text-muted block mb-1">Opis</label>
@@ -2738,6 +3502,93 @@ export default function AdminPage() {
                       {editingInventory ? 'Zapisz zmiany' : 'Dodaj'}
                     </button>
                     <button type="button" onClick={() => setShowInventoryForm(false)} className="flex-1 border border-border text-foreground font-semibold py-2 rounded-lg hover:bg-card-hover transition-colors">
+                      Anuluj
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Transaction History Modal */}
+          {showTransactionHistory && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+              <div className="bg-card border border-border rounded-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-bold flex items-center gap-2">
+                    <History className="w-5 h-5 text-primary" />
+                    Historia wydań — {inventoryItems.find(i => i.id === showTransactionHistory)?.name}
+                  </h2>
+                  <button onClick={() => setShowTransactionHistory(null)} className="p-2 text-muted hover:text-foreground rounded-lg hover:bg-card-hover">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                {transactions.length === 0 ? (
+                  <p className="text-muted text-center py-8">Brak historii transakcji.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {transactions.map(tx => {
+                      const typeLabels: Record<string, string> = { in: 'Przyjęcie', out: 'Wydanie', event_out: 'Zawody' }
+                      const typeColors: Record<string, string> = { in: 'bg-success/20 text-success', out: 'bg-orange-500/20 text-orange-400', event_out: 'bg-blue-500/20 text-blue-400' }
+                      return (
+                        <div key={tx.id} className="flex items-center gap-3 bg-background border border-border/50 rounded-lg p-3">
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${typeColors[tx.type] || ''}`}>
+                            {tx.type === 'in' ? '+' : '-'}{tx.quantity} {inventoryItems.find(i => i.id === showTransactionHistory)?.unit || 'szt.'}
+                          </span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${typeColors[tx.type] || ''}`}>
+                            {typeLabels[tx.type] || tx.type}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            {tx.note && <span className="text-sm">{tx.note}</span>}
+                            {tx.event && <span className="text-xs text-muted ml-2">({tx.event.title})</span>}
+                          </div>
+                          <div className="text-right flex-shrink-0">
+                            <div className="text-xs text-muted">{new Date(tx.created_at).toLocaleDateString('pl')} {new Date(tx.created_at).toLocaleTimeString('pl', { hour: '2-digit', minute: '2-digit' })}</div>
+                            {tx.performer && <div className="text-xs text-muted">{tx.performer.full_name}</div>}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Stock Adjustment Modal */}
+          {showStockAdjust && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+              <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md">
+                <h2 className="text-lg font-bold mb-1 flex items-center gap-2">
+                  <ArrowDownUp className="w-5 h-5 text-primary" />
+                  Wydanie / Przyjęcie
+                </h2>
+                <p className="text-sm text-muted mb-4">{showStockAdjust.name} — stan: {showStockAdjust.quantity} {showStockAdjust.unit}</p>
+                <form onSubmit={saveStockAdjust} className="space-y-4">
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setStockAdjustForm(f => ({ ...f, type: 'in' }))}
+                      className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${stockAdjustForm.type === 'in' ? 'border-success bg-success/10 text-success' : 'border-border text-muted hover:text-foreground'}`}>
+                      + Przyjęcie
+                    </button>
+                    <button type="button" onClick={() => setStockAdjustForm(f => ({ ...f, type: 'out' }))}
+                      className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${stockAdjustForm.type === 'out' ? 'border-orange-500 bg-orange-500/10 text-orange-400' : 'border-border text-muted hover:text-foreground'}`}>
+                      - Wydanie
+                    </button>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Ilość *</label>
+                    <input type="number" min="1" required value={stockAdjustForm.quantity} onChange={e => setStockAdjustForm(f => ({ ...f, quantity: e.target.value }))} className={inputClass} placeholder="Wpisz ilość" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Notatka</label>
+                    <input value={stockAdjustForm.note} onChange={e => setStockAdjustForm(f => ({ ...f, note: e.target.value }))} className={inputClass} placeholder="np. Zakup, wydanie na trening" />
+                  </div>
+                  <div className="flex gap-3 pt-2">
+                    <button type="submit" className="flex-1 bg-primary text-background font-semibold py-2 rounded-lg hover:bg-primary-dark transition-colors flex items-center justify-center gap-2">
+                      <Save className="w-4 h-4" />
+                      Zapisz
+                    </button>
+                    <button type="button" onClick={() => setShowStockAdjust(null)} className="flex-1 border border-border text-foreground font-semibold py-2 rounded-lg hover:bg-card-hover transition-colors">
                       Anuluj
                     </button>
                   </div>
@@ -3044,6 +3895,497 @@ export default function AdminPage() {
               <span>Wydruk w orientacji {attendancePreview.isCourse ? 'pionowej (portrait)' : 'poziomej (landscape)'}</span>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ============ RANGES TAB ============ */}
+      {tab === 'ranges' && (
+        <div>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-lg font-semibold">Osie strzeleckie ({shootingLanes.length})</h2>
+            <div className="flex gap-2">
+              <button onClick={() => { setShowEventBlockForm(true); setEventBlockForm({ lane_id: shootingLanes[0]?.id || '', event_id: '', date: '', start_time: '08:00', end_time: '20:00', stations: '' }) }} className="flex items-center gap-2 px-4 py-2 border border-border text-sm font-medium rounded-lg hover:bg-card transition-colors">
+                <Ban className="w-4 h-4" />
+                Zablokuj na zawody
+              </button>
+              <button onClick={openNewLane} className="flex items-center gap-2 px-4 py-2 bg-primary text-background text-sm font-semibold rounded-lg hover:bg-primary-dark transition-colors">
+                <Plus className="w-4 h-4" />
+                Dodaj oś
+              </button>
+            </div>
+          </div>
+
+          {/* Lista osi */}
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+            {shootingLanes.map(lane => (
+              <div key={lane.id} className={`bg-card border rounded-xl p-4 ${lane.is_active ? 'border-border' : 'border-red-500/30 opacity-60'}`}>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-semibold">{lane.name}</h3>
+                  <div className="flex gap-1">
+                    <button onClick={() => openEditLane(lane)} className="p-1.5 rounded hover:bg-background"><Pencil className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => deleteLane(lane.id)} className="p-1.5 rounded hover:bg-background text-red-500"><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
+                </div>
+                <div className="space-y-1 text-sm text-muted">
+                  <p>Długość: <span className="text-foreground font-medium">{lane.length_m}m</span></p>
+                  <p>Stanowiska: <span className="text-foreground font-medium">{lane.stations_count}</span></p>
+                  <p>Godziny: <span className="text-foreground font-medium">{(lane as any).open_time?.slice(0,5) || '08:00'} – {(lane as any).close_time?.slice(0,5) || '20:00'}</span></p>
+                  <p>Cena: <span className="text-foreground font-medium">{lane.price_per_hour_pln > 0 ? `${lane.price_per_hour_pln} zł/h` : 'bezpłatne'}</span></p>
+                  {lane.description && <p className="text-xs">{lane.description}</p>}
+                  {!lane.is_active && <span className="inline-block px-2 py-0.5 bg-red-500/10 text-red-500 text-xs rounded">Nieaktywna</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Rezerwacje na dany dzień */}
+          <div className="border-t border-border pt-6">
+            <h3 className="text-lg font-semibold mb-4">Rezerwacje</h3>
+            <div className="flex gap-3 mb-4">
+              <input
+                type="date"
+                value={laneResDate}
+                onChange={e => setLaneResDate(e.target.value)}
+                className="px-3 py-2 bg-card border border-border rounded-lg text-sm"
+              />
+              <select
+                value={laneResFilter}
+                onChange={e => setLaneResFilter(e.target.value)}
+                className="px-3 py-2 bg-card border border-border rounded-lg text-sm"
+              >
+                <option value="all">Wszystkie osie</option>
+                {shootingLanes.map(l => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {laneReservations.length === 0 ? (
+              <p className="text-muted text-sm py-4">Brak rezerwacji na wybrany dzień.</p>
+            ) : (
+              <div className="space-y-2">
+                {laneReservations.map(res => (
+                  <div key={res.id} className="bg-card border border-border rounded-lg p-3 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-2 h-8 rounded-full ${res.event_id ? 'bg-blue-500' : res.paid ? 'bg-green-500' : 'bg-yellow-500'}`} />
+                      <div>
+                        <div className="font-medium text-sm">
+                          {(res.lane as any)?.name || 'Tor'} · Stanowisko {res.station_number}
+                        </div>
+                        <div className="text-xs text-muted">
+                          {res.start_time.slice(0, 5)} – {res.end_time.slice(0, 5)}
+                          {' · '}
+                          {res.event_id
+                            ? <span className="text-blue-500">{(res.event as any)?.title || 'Zawody'}</span>
+                            : (res.member as any)?.full_name || res.guest_name || 'Anonim'
+                          }
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {!res.event_id && (
+                        <button
+                          onClick={() => toggleResPaid(res.id, !res.paid)}
+                          className={`px-2.5 py-1 rounded text-xs font-medium ${
+                            res.paid ? 'bg-green-500/10 text-green-500' : 'bg-yellow-500/10 text-yellow-500'
+                          }`}
+                        >
+                          {res.paid ? '✓ Opłacone' : '○ Nieopłacone'}
+                        </button>
+                      )}
+                      {res.event_id && (
+                        <span className="px-2.5 py-1 rounded text-xs font-medium bg-blue-500/10 text-blue-500">Zawody</span>
+                      )}
+                      <button onClick={() => cancelReservation(res.id)} className="p-1.5 rounded hover:bg-background text-red-500">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Grafik instruktorów */}
+          <div className="border-t border-border pt-6 mt-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Grafik instruktorów</h3>
+              <button
+                onClick={() => {
+                  setInstructorScheduleForm({ instructor_id: instructorsList[0]?.id || '', day_of_week: '1', start_time: '09:00', end_time: '17:00' })
+                  setShowInstructorScheduleForm(true)
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-primary text-background text-sm font-semibold rounded-lg hover:bg-primary-dark transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Dodaj dostępność
+              </button>
+            </div>
+
+            {instructorAvailability.length === 0 ? (
+              <p className="text-muted text-sm py-4">Brak zdefiniowanego grafiku instruktorów.</p>
+            ) : (
+              <div className="space-y-2">
+                {(() => {
+                  const dayNames = ['Niedziela', 'Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota']
+                  const grouped = new Map<string, typeof instructorAvailability>()
+                  for (const avail of instructorAvailability) {
+                    const name = (avail.instructor as any)?.full_name || 'Nieznany'
+                    if (!grouped.has(name)) grouped.set(name, [])
+                    grouped.get(name)!.push(avail)
+                  }
+                  return Array.from(grouped.entries()).map(([name, avails]) => (
+                    <div key={name} className="bg-card border border-border rounded-xl p-4">
+                      <h4 className="font-semibold text-sm mb-2">{name}</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {avails.sort((a, b) => a.day_of_week - b.day_of_week).map(avail => (
+                          <div
+                            key={avail.id}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+                              avail.is_active
+                                ? 'border-green-500/30 bg-green-500/5 text-green-400'
+                                : 'border-border bg-background text-muted line-through'
+                            }`}
+                          >
+                            <span className="font-medium">{dayNames[avail.day_of_week]}</span>
+                            <span>{avail.start_time.slice(0, 5)}–{avail.end_time.slice(0, 5)}</span>
+                            <button
+                              onClick={() => toggleInstructorAvailability(avail.id, !avail.is_active)}
+                              className="ml-1 p-0.5 rounded hover:bg-background"
+                              title={avail.is_active ? 'Wyłącz' : 'Włącz'}
+                            >
+                              {avail.is_active ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />}
+                            </button>
+                            <button
+                              onClick={() => deleteInstructorAvailability(avail.id)}
+                              className="p-0.5 rounded hover:bg-background text-red-500"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                })()}
+              </div>
+            )}
+          </div>
+
+          {/* Broń klubowa */}
+          <div className="border-t border-border pt-6 mt-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Broń klubowa ({rangeWeapons.length})</h3>
+              <button
+                onClick={() => {
+                  setEditingWeapon(null)
+                  setWeaponForm({ name: '', type: 'pistol', caliber: '', description: '', status: 'draft', inventory_ammo_id: '' })
+                  setShowWeaponForm(true)
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-primary text-background text-sm font-semibold rounded-lg hover:bg-primary-dark transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                Dodaj broń
+              </button>
+            </div>
+
+            {rangeWeapons.length === 0 ? (
+              <p className="text-muted text-sm py-4">Brak broni. Dodaj broń, aby przypisać ją do pakietów strzeleckich.</p>
+            ) : (
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {rangeWeapons.map(w => {
+                  const statusColors: Record<string, string> = {
+                    draft: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/30',
+                    in_stock: 'bg-green-500/10 text-green-500 border-green-500/30',
+                    maintenance: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/30',
+                    decommissioned: 'bg-red-500/10 text-red-500 border-red-500/30',
+                  }
+                  const statusLabels: Record<string, string> = {
+                    draft: 'Planowana',
+                    in_stock: 'Na stanie',
+                    maintenance: 'Serwis',
+                    decommissioned: 'Wycofana',
+                  }
+                  const typeLabels: Record<string, string> = { pistol: 'Pistolet', rifle: 'Karabin', shotgun: 'Strzelba', other: 'Inne' }
+
+                  return (
+                    <div key={w.id} className={`bg-card border rounded-xl p-4 ${w.status === 'in_stock' ? 'border-green-500/20' : w.status === 'decommissioned' ? 'border-red-500/20 opacity-50' : 'border-border'}`}>
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <h4 className="font-semibold text-sm">{w.name}</h4>
+                          <p className="text-xs text-muted">{typeLabels[w.type] || w.type} · {w.caliber}</p>
+                        </div>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => {
+                              setEditingWeapon(w)
+                              setWeaponForm({
+                                name: w.name, type: w.type, caliber: w.caliber,
+                                description: w.description || '', status: w.status,
+                                inventory_ammo_id: w.inventory_ammo_id || '',
+                              })
+                              setShowWeaponForm(true)
+                            }}
+                            className="p-1.5 rounded hover:bg-background"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => deleteWeapon(w.id)} className="p-1.5 rounded hover:bg-background text-red-500">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      {w.description && <p className="text-xs text-muted mb-2">{w.description}</p>}
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={w.status}
+                          onChange={e => updateWeaponStatus(w.id, e.target.value)}
+                          className={`text-xs px-2 py-1 rounded-lg border font-medium ${statusColors[w.status] || 'border-border'}`}
+                        >
+                          <option value="draft">Planowana</option>
+                          <option value="in_stock">Na stanie</option>
+                          <option value="maintenance">Serwis</option>
+                          <option value="decommissioned">Wycofana</option>
+                        </select>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Modal: nowa/edycja broń */}
+          {showWeaponForm && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowWeaponForm(false)}>
+              <div className="bg-card border border-border rounded-xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+                <h3 className="text-lg font-bold mb-4">{editingWeapon ? 'Edytuj broń' : 'Nowa broń'}</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Nazwa</label>
+                    <input value={weaponForm.name} onChange={e => setWeaponForm(f => ({ ...f, name: e.target.value }))} placeholder="np. Glock 17 Gen5" className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm text-muted mb-1">Typ</label>
+                      <select value={weaponForm.type} onChange={e => setWeaponForm(f => ({ ...f, type: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm">
+                        <option value="pistol">Pistolet</option>
+                        <option value="rifle">Karabin</option>
+                        <option value="shotgun">Strzelba</option>
+                        <option value="other">Inne</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm text-muted mb-1">Kaliber</label>
+                      <input value={weaponForm.caliber} onChange={e => setWeaponForm(f => ({ ...f, caliber: e.target.value }))} placeholder="np. 9x19mm" className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Status</label>
+                    <select value={weaponForm.status} onChange={e => setWeaponForm(f => ({ ...f, status: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm">
+                      <option value="draft">Planowana (nie widoczna w ofercie)</option>
+                      <option value="in_stock">Na stanie (dostępna)</option>
+                      <option value="maintenance">Serwis (tymczasowo niedostępna)</option>
+                      <option value="decommissioned">Wycofana</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Powiązana amunicja z magazynu</label>
+                    <select value={weaponForm.inventory_ammo_id} onChange={e => setWeaponForm(f => ({ ...f, inventory_ammo_id: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm">
+                      <option value="">— Brak —</option>
+                      {inventoryItems.filter(i => i.category === 'ammunition').map(i => (
+                        <option key={i.id} value={i.id}>{i.name} ({i.caliber || '-'}) · {i.quantity} {i.unit}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Opis (opcjonalnie)</label>
+                    <input value={weaponForm.description} onChange={e => setWeaponForm(f => ({ ...f, description: e.target.value }))} placeholder="np. Broń krótka, ramka polimerowa" className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-6">
+                  <button onClick={() => setShowWeaponForm(false)} className="flex-1 px-4 py-2.5 border border-border rounded-lg text-sm font-medium hover:bg-background">Anuluj</button>
+                  <button onClick={saveWeapon} disabled={!weaponForm.name || !weaponForm.caliber} className="flex-1 px-4 py-2.5 bg-primary text-background rounded-lg text-sm font-semibold hover:bg-primary-dark disabled:opacity-50">
+                    <Save className="w-4 h-4 inline mr-1" />
+                    {editingWeapon ? 'Zapisz' : 'Dodaj'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal: nowy wpis grafiku instruktora */}
+          {showInstructorScheduleForm && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowInstructorScheduleForm(false)}>
+              <div className="bg-card border border-border rounded-xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+                <h3 className="text-lg font-bold mb-4">Dodaj dostępność instruktora</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Instruktor</label>
+                    <select
+                      value={instructorScheduleForm.instructor_id}
+                      onChange={e => setInstructorScheduleForm(f => ({ ...f, instructor_id: e.target.value }))}
+                      className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                    >
+                      {instructorsList.map(i => (
+                        <option key={i.id} value={i.id}>{i.full_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Dzień tygodnia</label>
+                    <select
+                      value={instructorScheduleForm.day_of_week}
+                      onChange={e => setInstructorScheduleForm(f => ({ ...f, day_of_week: e.target.value }))}
+                      className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                    >
+                      <option value="1">Poniedziałek</option>
+                      <option value="2">Wtorek</option>
+                      <option value="3">Środa</option>
+                      <option value="4">Czwartek</option>
+                      <option value="5">Piątek</option>
+                      <option value="6">Sobota</option>
+                      <option value="0">Niedziela</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm text-muted mb-1">Od</label>
+                      <input
+                        type="time"
+                        value={instructorScheduleForm.start_time}
+                        onChange={e => setInstructorScheduleForm(f => ({ ...f, start_time: e.target.value }))}
+                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-muted mb-1">Do</label>
+                      <input
+                        type="time"
+                        value={instructorScheduleForm.end_time}
+                        onChange={e => setInstructorScheduleForm(f => ({ ...f, end_time: e.target.value }))}
+                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-6">
+                  <button onClick={() => setShowInstructorScheduleForm(false)} className="flex-1 px-4 py-2.5 border border-border rounded-lg text-sm font-medium hover:bg-background">Anuluj</button>
+                  <button
+                    onClick={saveInstructorSchedule}
+                    disabled={!instructorScheduleForm.instructor_id}
+                    className="flex-1 px-4 py-2.5 bg-primary text-background rounded-lg text-sm font-semibold hover:bg-primary-dark disabled:opacity-50"
+                  >
+                    <Save className="w-4 h-4 inline mr-1" />
+                    Dodaj
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal: nowa/edycja osi */}
+          {showLaneForm && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowLaneForm(false)}>
+              <div className="bg-card border border-border rounded-xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+                <h3 className="text-lg font-bold mb-4">{editingLane ? 'Edytuj oś' : 'Nowa oś strzelecka'}</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Nazwa</label>
+                    <input value={laneForm.name} onChange={e => setLaneForm(f => ({ ...f, name: e.target.value }))} placeholder="np. Oś 25m" className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm text-muted mb-1">Długość (m)</label>
+                      <input type="number" value={laneForm.length_m} onChange={e => setLaneForm(f => ({ ...f, length_m: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-muted mb-1">Liczba stanowisk</label>
+                      <input type="number" value={laneForm.stations_count} onChange={e => setLaneForm(f => ({ ...f, stations_count: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm text-muted mb-1">Otwarcie</label>
+                      <input type="time" value={laneForm.open_time} onChange={e => setLaneForm(f => ({ ...f, open_time: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-muted mb-1">Zamknięcie</label>
+                      <input type="time" value={laneForm.close_time} onChange={e => setLaneForm(f => ({ ...f, close_time: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Cena za godzinę (zł)</label>
+                    <input type="number" step="0.01" value={laneForm.price_per_hour_pln} onChange={e => setLaneForm(f => ({ ...f, price_per_hour_pln: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Opis (opcjonalnie)</label>
+                    <input value={laneForm.description} onChange={e => setLaneForm(f => ({ ...f, description: e.target.value }))} placeholder="np. Broń krótka, pneumatyczna" className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={laneForm.is_active} onChange={e => setLaneForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />
+                    Aktywna (widoczna w rezerwacjach)
+                  </label>
+                </div>
+                <div className="flex gap-2 mt-6">
+                  <button onClick={() => setShowLaneForm(false)} className="flex-1 px-4 py-2.5 border border-border rounded-lg text-sm font-medium hover:bg-background">Anuluj</button>
+                  <button onClick={saveLane} disabled={!laneForm.name} className="flex-1 px-4 py-2.5 bg-primary text-background rounded-lg text-sm font-semibold hover:bg-primary-dark disabled:opacity-50">
+                    <Save className="w-4 h-4 inline mr-1" />
+                    {editingLane ? 'Zapisz' : 'Dodaj'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal: blokada na zawody */}
+          {showEventBlockForm && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowEventBlockForm(false)}>
+              <div className="bg-card border border-border rounded-xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+                <h3 className="text-lg font-bold mb-4">Zablokuj oś na zawody</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Oś</label>
+                    <select value={eventBlockForm.lane_id} onChange={e => setEventBlockForm(f => ({ ...f, lane_id: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm">
+                      {shootingLanes.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Wydarzenie</label>
+                    <select value={eventBlockForm.event_id} onChange={e => setEventBlockForm(f => ({ ...f, event_id: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm">
+                      <option value="">Wybierz...</option>
+                      {events.map(ev => <option key={ev.id} value={ev.id}>{ev.title} ({ev.start_date})</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Data</label>
+                    <input type="date" value={eventBlockForm.date} onChange={e => setEventBlockForm(f => ({ ...f, date: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm text-muted mb-1">Od</label>
+                      <input type="time" value={eventBlockForm.start_time} onChange={e => setEventBlockForm(f => ({ ...f, start_time: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-muted mb-1">Do</label>
+                      <input type="time" value={eventBlockForm.end_time} onChange={e => setEventBlockForm(f => ({ ...f, end_time: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Stanowiska (puste = wszystkie)</label>
+                    <input value={eventBlockForm.stations} onChange={e => setEventBlockForm(f => ({ ...f, stations: e.target.value }))} placeholder="np. 1,2,3 lub puste dla wszystkich" className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-6">
+                  <button onClick={() => setShowEventBlockForm(false)} className="flex-1 px-4 py-2.5 border border-border rounded-lg text-sm font-medium hover:bg-background">Anuluj</button>
+                  <button onClick={blockLaneForEvent} disabled={!eventBlockForm.event_id || !eventBlockForm.date} className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50">
+                    <Ban className="w-4 h-4 inline mr-1" />
+                    Zablokuj
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

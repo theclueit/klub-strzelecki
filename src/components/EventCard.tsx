@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
-import { MapPin, Users, Clock, Tag, UserPlus, Check, X, User, Mail, Phone, ExternalLink, Target, Shield, AlertTriangle } from 'lucide-react'
+import { MapPin, Users, Clock, Tag, UserPlus, Check, X, User, Mail, Phone, ExternalLink, Target, Shield, AlertTriangle, CreditCard } from 'lucide-react'
 import { format } from 'date-fns'
 import { pl } from 'date-fns/locale'
 
@@ -59,6 +59,8 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
   const [mode, setMode] = useState<RegMode>(null)
   const [registering, setRegistering] = useState(false)
   const [registered, setRegistered] = useState(false)
+  const [isPaid, setIsPaid] = useState(false)
+  const [paymentLoading, setPaymentLoading] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [error, setError] = useState('')
   const [count, setCount] = useState(regCount)
@@ -73,7 +75,7 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
     if (!member) return
     supabase
       .from('event_registrations')
-      .select('id')
+      .select('id, paid')
       .eq('event_id', event.id)
       .eq('member_id', member.id)
       .maybeSingle()
@@ -81,6 +83,7 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
         if (data) {
           setRegistered(true)
           setMyRegId(data.id)
+          setIsPaid(!!data.paid)
           loadMyDisciplines(data.id)
         }
       })
@@ -131,6 +134,13 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
   const selectedTotal = eventDisciplines
     .filter(ed => selectedDiscs.has(ed.id))
     .reduce((sum, ed) => sum + getEdPrice(ed), 0)
+
+  // Total cost of already registered disciplines (for payment button)
+  const totalCost = myDiscs.length > 0
+    ? eventDisciplines
+        .filter(ed => myDiscs.some((d: any) => d.edId === ed.id))
+        .reduce((sum, ed) => sum + getEdPrice(ed), 0)
+    : Number(event.price_pln) || 0
 
   // When adding disciplines, show only the cost of NEW (not already registered) ones
   const alreadyEdIds = new Set(myDiscs.map((d: any) => d.edId))
@@ -416,6 +426,33 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
 
     setRegistered(false)
     setCount(prev => Math.max(0, prev - 1))
+  }
+
+  async function handlePayment() {
+    if (!myRegId) return
+    setPaymentLoading(true)
+    setError('')
+    try {
+      const res = await fetch('/api/payments/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ registration_id: myRegId }),
+      })
+      const data = await res.json()
+      if (data.free) {
+        setIsPaid(true)
+        return
+      }
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url
+      } else {
+        setError(data.error || 'Błąd płatności')
+      }
+    } catch {
+      setError('Nie udało się połączyć z systemem płatności')
+    } finally {
+      setPaymentLoading(false)
+    }
   }
 
   // Guest registration
@@ -753,8 +790,18 @@ export default function EventCard({ event, regCount, eventDisciplines, slots = [
             <div className="space-y-2">
               <div className="w-full text-sm px-4 py-2 bg-success/20 text-success font-semibold rounded-lg flex items-center justify-center gap-1">
                 <Check className="w-4 h-4" />
-                Zapisano
+                Zapisano {isPaid && '· Opłacono'}
               </div>
+              {!isPaid && totalCost > 0 && (
+                <button
+                  onClick={handlePayment}
+                  disabled={paymentLoading}
+                  className="w-full text-sm px-4 py-2 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <CreditCard className="w-4 h-4" />
+                  {paymentLoading ? 'Przekierowanie...' : `Zapłać ${totalCost.toFixed(2)} zł`}
+                </button>
+              )}
               {/* Show option to add more disciplines */}
               {member && eventDisciplines.length > 1 && myDiscs.length < eventDisciplines.length && (
                 <button

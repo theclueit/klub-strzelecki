@@ -320,3 +320,86 @@ export async function sendWelcomeEmail(params: {
     `),
   })
 }
+
+export async function sendRangeRulesEmail(params: {
+  to: string
+  guestName: string
+  bookingDate: string
+  weaponName: string
+  packageName?: string
+}) {
+  const resend = getResend()
+  const safetyRules = await getSafetyRules()
+
+  return resend.emails.send({
+    from: fromEmail,
+    to: params.to,
+    subject: 'Regulamin strzelnicy i zasady bezpieczeństwa — Klub Strzelecki',
+    html: emailWrapper(`
+      <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Regulamin i zasady bezpieczeństwa</p>
+
+      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${params.guestName}</strong>,</p>
+
+      <p style="margin: 0 0 8px;">Dziękujemy za rezerwację strzelania rekreacyjnego${params.packageName ? ` (${params.packageName})` : ''}.</p>
+      <p style="margin: 0 0 24px;">Przed wizytą na strzelnicy prosimy o zapoznanie się z poniższym regulaminem i zasadami bezpieczeństwa:</p>
+
+      <div style="background: #16213e; border-radius: 8px; padding: 16px; margin: 0 0 24px;">
+        <p style="margin: 0 0 4px; font-size: 13px;">&#128197; Data: <strong style="color: #fff;">${params.bookingDate}</strong></p>
+        <p style="margin: 0; font-size: 13px;">&#128299; Broń: <strong style="color: #fff;">${params.weaponName}</strong></p>
+      </div>
+
+      ${safetyRules}
+
+      <div style="background: #1e2a45; border-radius: 8px; padding: 16px; margin: 0 0 24px;">
+        <p style="margin: 0; font-size: 13px; color: #ccc;">
+          <strong style="color: #ff6b35;">Ważne:</strong> Prosimy o zabranie ze sobą dokumentu tożsamości (dowód osobisty lub paszport).
+          Osoby bez pozwolenia na broń mogą strzelać wyłącznie pod bezpośrednim nadzorem instruktora.
+        </p>
+      </div>
+
+      <div style="text-align: center; margin: 0 0 24px;">
+        <a href="${appUrl}/strzelanie-rekreacyjne" style="display: inline-block; background: #ff6b35; color: #1a1a2e; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: bold; font-size: 16px;">
+          Szczegóły rezerwacji
+        </a>
+      </div>
+    `),
+  })
+}
+
+export async function sendPaymentConfirmation(params: {
+  to: string
+  memberName: string
+  eventTitle: string
+  eventDate: string
+  amount: number
+  sessionId: string
+}) {
+  const resend = getResend()
+  const date = formatDate(params.eventDate)
+
+  return resend.emails.send({
+    from: fromEmail,
+    to: params.to,
+    subject: `Potwierdzenie płatności: ${params.eventTitle}`,
+    html: emailWrapper(`
+      <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Potwierdzenie płatności za wydarzenie</p>
+
+      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${params.memberName}</strong>,</p>
+
+      <p style="margin: 0 0 24px;">Twoja płatność została pomyślnie zaksięgowana.</p>
+
+      <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
+        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${params.eventTitle}</h2>
+        <p style="margin: 0 0 8px; font-size: 14px;">&#128197; ${date}</p>
+        <p style="margin: 0 0 8px; font-size: 16px;"><strong style="color: #22c55e;">Zapłacono: ${params.amount.toFixed(2)} zł</strong></p>
+        <p style="margin: 0; font-size: 12px; color: #888;">Nr transakcji: ${params.sessionId}</p>
+      </div>
+
+      <div style="text-align: center; margin: 0 0 24px;">
+        <a href="${appUrl}/kalendarz" style="display: inline-block; background: #ff6b35; color: #1a1a2e; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: bold; font-size: 16px;">
+          Zobacz kalendarz
+        </a>
+      </div>
+    `),
+  })
+}

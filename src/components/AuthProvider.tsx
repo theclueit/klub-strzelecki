@@ -54,6 +54,15 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     return () => subscription.unsubscribe()
   }, [])
 
+  // Heartbeat: update last_seen_at every 60s while member is logged in
+  useEffect(() => {
+    if (!member) return
+    const ping = () => supabase.from('members').update({ last_seen_at: new Date().toISOString() }).eq('id', member.id).then(() => {})
+    ping()
+    const interval = setInterval(ping, 60_000)
+    return () => clearInterval(interval)
+  }, [member?.id])
+
   async function loadMember(authId: string) {
     const { data } = await supabase
       .from('members')
