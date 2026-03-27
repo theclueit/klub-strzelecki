@@ -45,8 +45,13 @@ export default function JudgePage() {
   // Already scored disciplines per member
   const [scoredDisciplines, setScoredDisciplines] = useState<Map<string, Set<string>>>(new Map())
 
-  // Photo
+  // Event settings
+  const [allowTargetPhotos, setAllowTargetPhotos] = useState(true)
+
+  // Photo & AI analysis
   const [photo, setPhoto] = useState<string | null>(null)
+  const [aiAnalysis, setAiAnalysis] = useState<any>(null)
+  const [aiLoading, setAiLoading] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Result form
@@ -67,7 +72,7 @@ export default function JudgePage() {
   const loadAssignedEvents = useCallback(async (judgeData: Member) => {
     const { data: ejData } = await supabase
       .from('event_judges')
-      .select('id, event_id, status, event:events(id, title, start_date, end_date, is_published)')
+      .select('id, event_id, status, event:events(id, title, start_date, end_date, is_published, allow_target_photos)')
       .eq('judge_id', judgeData.id)
 
     const now = new Date()
@@ -125,6 +130,8 @@ export default function JudgePage() {
 
   async function selectEvent(eventId: string, judgeOverride?: Member) {
     setSelectedEventId(eventId)
+    const selectedEv = assignedEvents.find(e => (e.event as any).id === eventId)
+    setAllowTargetPhotos((selectedEv?.event as any)?.allow_target_photos ?? true)
     const j = judgeOverride ?? judge
     if (j) {
 
@@ -166,8 +173,8 @@ export default function JudgePage() {
     })
   }
 
-  function hasTarget(ed: EventDisciplineRow | null): boolean {
-    return ed?.discipline?.scoring_type !== 'shotgun'
+  function canShowPhoto(ed: EventDisciplineRow | null): boolean {
+    return allowTargetPhotos && ed?.discipline?.scoring_type !== 'shotgun'
   }
 
   function selectMember(m: Member) {
@@ -175,7 +182,7 @@ export default function JudgePage() {
     const available = getAvailableDisciplines(m.id)
     if (available.length === 1) {
       setSelectedDiscipline(available[0])
-      setStep(hasTarget(available[0]) ? 'photo' : 'review')
+      setStep(canShowPhoto(available[0]) ? 'photo' : 'review')
     } else if (available.length === 0) {
       setSelectedDiscipline(null)
       setStep('photo')
@@ -186,7 +193,7 @@ export default function JudgePage() {
 
   function selectDisc(ed: EventDisciplineRow) {
     setSelectedDiscipline(ed)
-    setStep(hasTarget(ed) ? 'photo' : 'review')
+    setStep(canShowPhoto(ed) ? 'photo' : 'review')
   }
 
   function compressImage(dataUrl: string, maxWidth: number, quality: number): Promise<string> {
@@ -214,9 +221,44 @@ export default function JudgePage() {
       // Compress: max 1200px wide, 60% quality → ~100-300KB instead of 5-12MB
       const compressed = await compressImage(raw, 1200, 0.6)
       setPhoto(compressed)
+      setAiAnalysis(null)
       setStep('review')
+      // Trigger AI analysis in background
+      analyzeTargetPhoto(compressed)
     }
     reader.readAsDataURL(file)
+  }
+
+  async function analyzeTargetPhoto(imageData: string) {
+    setAiLoading(true)
+    try {
+      const res = await fetch('/api/analyze-target', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: imageData,
+          discipline_name: selectedDiscipline?.discipline?.name ?? null,
+          shots_count: null,
+        }),
+      })
+      const json = await res.json()
+      if (json.ok && json.analysis) {
+        setAiAnalysis(json.analysis)
+      }
+    } catch (err) {
+      console.error('AI analysis failed:', err)
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  function applyAiSuggestion() {
+    if (!aiAnalysis) return
+    if (aiAnalysis.total_score !== undefined) setTotalScore(String(aiAnalysis.total_score))
+    if (aiAnalysis.tens_count !== undefined) setTensCount(String(aiAnalysis.tens_count))
+    if (aiAnalysis.xs_count !== undefined) setXsCount(String(aiAnalysis.xs_count))
+    if (aiAnalysis.misses !== undefined) setMisses(String(aiAnalysis.misses))
+    if (aiAnalysis.shots_detected) setMaxScore(String(aiAnalysis.shots_detected * 10))
   }
 
   // ---- Shots mode helpers ----
@@ -402,6 +444,8 @@ export default function JudgePage() {
 
   function resetForm() {
     setPhoto(null)
+    setAiAnalysis(null)
+    setAiLoading(false)
     setEntryMode('quick')
     setShotsCount('10')
     setShots([])
@@ -721,6 +765,43 @@ export default function JudgePage() {
           {photo && (
             <div className="mb-4">
               <img src={photo} alt="Tarcza" className="w-full rounded-lg border border-border" />
+              {aiLoading && (
+                <div className="mt-2 text-sm text-muted flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  Analiza AI tarczy...
+                </div>
+              )}
+              {aiAnalysis && !aiLoading && (
+                <div className="mt-3 bg-primary/5 border border-primary/20 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-semibold text-primary">Sugestia AI</span>
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                      aiAnalysis.confidence === 'high' ? 'bg-success/20 text-success' :
+                      aiAnalysis.confidence === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
+                      'bg-danger/20 text-danger'
+                    }`}>
+                      {aiAnalysis.confidence === 'high' ? 'Wysoka pewność' :
+                       aiAnalysis.confidence === 'medium' ? 'Średnia pewność' : 'Niska pewność'}
+                    </span>
+                  </div>
+                  {aiAnalysis.total_score !== undefined && (
+                    <div className="text-sm mb-1">Wynik: <span className="font-mono font-bold">{aiAnalysis.total_score}</span></div>
+                  )}
+                  {aiAnalysis.shots_detected !== undefined && (
+                    <div className="text-sm mb-1">Trafienia: {aiAnalysis.shots_detected} | 10ki: {aiAnalysis.tens_count ?? 0} | Pudła: {aiAnalysis.misses ?? 0}</div>
+                  )}
+                  {aiAnalysis.notes && (
+                    <div className="text-xs text-muted mt-1">{aiAnalysis.notes}</div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={applyAiSuggestion}
+                    className="mt-2 w-full text-sm px-3 py-1.5 bg-primary text-background rounded-lg hover:bg-primary-dark transition-colors font-medium"
+                  >
+                    Zastosuj sugestię AI
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

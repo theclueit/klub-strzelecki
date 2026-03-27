@@ -79,6 +79,7 @@ export interface Event {
   max_participants: number | null
   price_pln: number
   is_published: boolean
+  allow_target_photos: boolean
   created_at: string
   discipline?: Discipline
 }

@@ -27,7 +27,7 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
 
   const { data: results } = await supabase
     .from('results')
-    .select('*, discipline:disciplines(name), event:events(title)')
+    .select('*, discipline:disciplines(name), event:events(title, allow_target_photos)')
     .eq('member_id', id)
     .order('shot_at', { ascending: false })
 
@@ -169,22 +169,29 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
       ) : (
         <div className="space-y-3">
           {results.map((r: any) => (
-            <div key={r.id} className="bg-card border border-border rounded-xl p-5 flex items-center justify-between">
-              <div>
-                <div className="font-medium">{r.event?.title ?? 'Strzelanie treningowe'}</div>
-                <div className="text-sm text-muted">
-                  {r.discipline?.name} &middot; {format(new Date(r.shot_at), 'd MMM yyyy, HH:mm', { locale: pl })}
+            <div key={r.id} className="bg-card border border-border rounded-xl p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-medium">{r.event?.title ?? 'Strzelanie treningowe'}</div>
+                  <div className="text-sm text-muted">
+                    {r.discipline?.name} &middot; {format(new Date(r.shot_at), 'd MMM yyyy, HH:mm', { locale: pl })}
+                  </div>
+                  {r.judge_comment && (
+                    <p className="text-sm text-muted mt-1 italic">&ldquo;{r.judge_comment}&rdquo;</p>
+                  )}
                 </div>
-                {r.judge_comment && (
-                  <p className="text-sm text-muted mt-1 italic">&ldquo;{r.judge_comment}&rdquo;</p>
-                )}
+                <div className="text-right">
+                  <div className="text-2xl font-mono font-bold">{r.total_score}</div>
+                  {r.max_score && (
+                    <div className="text-xs text-muted">/ {r.max_score}</div>
+                  )}
+                </div>
               </div>
-              <div className="text-right">
-                <div className="text-2xl font-mono font-bold">{r.total_score}</div>
-                {r.max_score && (
-                  <div className="text-xs text-muted">/ {r.max_score}</div>
-                )}
-              </div>
+              {r.target_image_url && (
+                <div className="mt-3">
+                  <img src={r.target_image_url} alt="Tarcza" className="w-full max-w-sm rounded-lg border border-border" />
+                </div>
+              )}
             </div>
           ))}
         </div>

@@ -20,6 +20,7 @@ interface EventRow {
   max_participants: number | null
   price_pln: number
   is_published: boolean
+  allow_target_photos: boolean
 }
 
 interface EventJudge {
@@ -173,7 +174,7 @@ export default function AdminPage() {
     title: '', description: '', event_type: 'competition' as string,
     start_day: '', start_time: '09:00', end_day: '', end_time: '17:00',
     location: '', address: '',
-    max_participants: '', is_published: true,
+    max_participants: '', is_published: true, allow_target_photos: true,
   })
   const [disciplineForm, setDisciplineForm] = useState({
     name: '', description: '', target_type: '' as string, category: 'discipline' as string, default_price_pln: '0',
@@ -234,7 +235,7 @@ export default function AdminPage() {
       title: '', description: '', event_type: 'competition',
       start_day: '', start_time: '09:00', end_day: '', end_time: '17:00',
       location: 'Strzelnica klubowa', address: '',
-      max_participants: '30', is_published: true,
+      max_participants: '30', is_published: true, allow_target_photos: true,
     })
     setEditingEventDisciplines([])
     setShowEventForm(true)
@@ -257,6 +258,7 @@ export default function AdminPage() {
       address: ev.address ?? '',
       max_participants: ev.max_participants?.toString() ?? '',
       is_published: ev.is_published,
+      allow_target_photos: ev.allow_target_photos ?? true,
     })
     // Load existing event disciplines into form
     const existing = getEventDiscs(ev.id)
@@ -316,6 +318,7 @@ export default function AdminPage() {
         max_participants: eventForm.max_participants ? parseInt(eventForm.max_participants) : null,
         price_pln: 0,
         is_published: eventForm.is_published,
+        allow_target_photos: eventForm.allow_target_photos,
       }
 
       let eventId: string
@@ -1766,6 +1769,10 @@ export default function AdminPage() {
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input type="checkbox" checked={eventForm.is_published} onChange={e => setEventForm(f => ({ ...f, is_published: e.target.checked }))} className="w-4 h-4 accent-primary" />
                     <span className="text-sm">Opublikowane (widoczne w kalendarzu)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" checked={eventForm.allow_target_photos} onChange={e => setEventForm(f => ({ ...f, allow_target_photos: e.target.checked }))} className="w-4 h-4 accent-primary" />
+                    <span className="text-sm">Zezwól na zdjęcia tarczy (sędzia może fotografować tarcze)</span>
                   </label>
 
                   {error && <p className="text-sm text-danger">{error}</p>}
