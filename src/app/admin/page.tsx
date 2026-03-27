@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
-import { Shield, Calendar, Target, Users, Plus, Trash2, Pencil, Save, X, UserPlus, ChevronDown, ChevronUp, ClipboardList, Check, Ban, Tag, Clock, Printer, MapPin, Zap, Package, AlertTriangle, DollarSign, Eye, Crosshair, Boxes, Wrench, CircleDot, Bell, Mail, Trophy } from 'lucide-react'
+import { Shield, Calendar, Target, Users, Plus, Trash2, Pencil, Save, X, UserPlus, ChevronDown, ChevronUp, ClipboardList, Check, Ban, Tag, Clock, Printer, MapPin, Zap, Package, AlertTriangle, DollarSign, Eye, Crosshair, Boxes, Wrench, CircleDot, Bell, Mail, Trophy, Hash } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import type { Discipline, Member, EventDiscipline, EventDisciplineSlot } from '@/types/database'
 
@@ -1149,6 +1149,103 @@ export default function AdminPage() {
     }
   }
 
+  // ---- PRINT START NUMBERS (naklejki) ----
+  async function printStartNumbers(eventId: string) {
+    const ev = events.find(e => e.id === eventId)
+    if (!ev) return
+
+    const { data: regs } = await supabase
+      .from('event_registrations')
+      .select('member_id, start_number, member:members(full_name, club_name, license_number)')
+      .eq('event_id', eventId)
+      .neq('status', 'cancelled')
+      .not('start_number', 'is', null)
+      .order('start_number')
+
+    if (!regs || regs.length === 0) {
+      alert('Brak zawodników z numerami startowymi')
+      return
+    }
+
+    const qrBaseUrl = `START-${eventId}-`
+
+    let html = `<!DOCTYPE html><html><head><title>Numery startowe - ${ev.title}</title><style>
+      @page { size: A4; margin: 5mm; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: Arial, sans-serif; }
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; width: 210mm; }
+      .card {
+        width: 70mm; height: 99mm;
+        border: 1px dashed #ccc;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        padding: 8mm;
+        page-break-inside: avoid;
+      }
+      .number {
+        font-size: 72px; font-weight: 900;
+        line-height: 1; margin-bottom: 4mm;
+        color: #000;
+      }
+      .name {
+        font-size: 16px; font-weight: 700;
+        text-align: center; margin-bottom: 2mm;
+        max-width: 100%; overflow: hidden;
+        text-overflow: ellipsis; white-space: nowrap;
+      }
+      .club {
+        font-size: 12px; color: #555;
+        text-align: center; margin-bottom: 3mm;
+      }
+      .license {
+        font-size: 10px; color: #888;
+        margin-bottom: 3mm;
+      }
+      .qr {
+        width: 25mm; height: 25mm;
+      }
+      .event-title {
+        font-size: 9px; color: #999;
+        text-align: center; margin-top: 2mm;
+        max-width: 100%; overflow: hidden;
+        text-overflow: ellipsis; white-space: nowrap;
+      }
+      @media print {
+        .grid { gap: 0; }
+        .card { border: 1px dashed #ddd; }
+      }
+    </style></head><body><div class="grid">`
+
+    for (const r of regs as any[]) {
+      const sn = r.start_number
+      const name = r.member?.full_name ?? '?'
+      const club = r.member?.club_name ?? ''
+      const license = r.member?.license_number ?? ''
+      const qrData = encodeURIComponent(qrBaseUrl + sn)
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${qrData}`
+
+      html += `<div class="card">
+        <div class="number">${sn}</div>
+        <div class="name">${name}</div>
+        <div class="club">${club}</div>
+        ${license ? `<div class="license">${license}</div>` : ''}
+        <img class="qr" src="${qrUrl}" alt="QR ${sn}" />
+        <div class="event-title">${ev.title}</div>
+      </div>`
+    }
+
+    html += `</div></body></html>`
+
+    const printWindow = window.open('', '_blank')
+    if (printWindow) {
+      printWindow.document.write(html)
+      printWindow.document.close()
+      printWindow.focus()
+      // Wait for QR images to load
+      setTimeout(() => printWindow.print(), 1500)
+    }
+  }
+
   if (loading) return <div className="p-8 text-center text-muted">Ladowanie...</div>
   if (!member || member.role !== 'admin') return null
 
@@ -1357,13 +1454,22 @@ export default function AdminPage() {
                         </button>
                       )}
                       {getEventTotalRegs(ev.id) > 0 && (
-                        <button
-                          onClick={() => openAttendancePreview(ev.id)}
-                          className="p-2 text-muted hover:text-primary rounded-lg hover:bg-card-hover"
-                          title="Lista do podpisu"
-                        >
-                          <Printer className="w-4 h-4" />
-                        </button>
+                        <>
+                          <button
+                            onClick={() => openAttendancePreview(ev.id)}
+                            className="p-2 text-muted hover:text-primary rounded-lg hover:bg-card-hover"
+                            title="Lista do podpisu"
+                          >
+                            <Printer className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => printStartNumbers(ev.id)}
+                            className="p-2 text-muted hover:text-primary rounded-lg hover:bg-card-hover"
+                            title="Drukuj numery startowe"
+                          >
+                            <Hash className="w-4 h-4" />
+                          </button>
+                        </>
                       )}
                       {evDiscs.length > 0 && ev.event_type !== 'course' && (
                         <button

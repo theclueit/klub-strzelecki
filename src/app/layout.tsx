@@ -34,8 +34,15 @@ export default function RootLayout({
           <Navigation />
           <main className="flex-1">{children}</main>
           <footer className="bg-card border-t border-border py-6">
-            <div className="max-w-7xl mx-auto px-4 text-center text-sm text-muted">
-              &copy; 2026 Klub Strzelecki. Wszelkie prawa zastrzeżone.
+            <div className="max-w-7xl mx-auto px-4 text-center text-sm text-muted space-y-2">
+              <p>&copy; {new Date().getFullYear()} Klub Strzelecki. Wszelkie prawa zastrzeżone.</p>
+              <p className="flex items-center justify-center gap-1.5 text-xs">
+                <span>Stworzone przez</span>
+                <a href="https://clueit.pl" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 hover:text-foreground transition-colors font-medium">
+                  <img src="/clueit-logo.svg" alt="Clue IT" className="h-4 w-auto" />
+                  Clue IT
+                </a>
+              </p>
             </div>
           </footer>
         </AuthProvider>
