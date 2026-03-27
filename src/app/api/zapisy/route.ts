@@ -115,6 +115,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Get next start number for this event
+    const { data: maxNumData } = await supabase
+      .from('event_registrations')
+      .select('start_number')
+      .eq('event_id', event_id)
+      .not('start_number', 'is', null)
+      .order('start_number', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    const nextStartNumber = ((maxNumData as any)?.start_number ?? 0) + 1
+
     // Create registration
     const { data: regData, error: regErr } = await supabase
       .from('event_registrations')
@@ -122,8 +134,9 @@ export async function POST(req: NextRequest) {
         event_id,
         member_id,
         status: 'registered',
+        start_number: nextStartNumber,
       })
-      .select('id')
+      .select('id, start_number')
       .single()
 
     if (regErr) {
@@ -165,6 +178,7 @@ export async function POST(req: NextRequest) {
         eventDate: event.start_date,
         eventLocation: event.location,
         disciplines: disciplineNames,
+        startNumber: regData.start_number,
       }).catch(() => {})
     }
 

@@ -110,6 +110,7 @@ export async function sendRegistrationConfirmation(params: {
   eventDate: string
   eventLocation: string | null
   disciplines: string[]
+  startNumber?: number | null
 }) {
   const resend = getResend()
   const date = formatDate(params.eventDate)
@@ -131,6 +132,7 @@ export async function sendRegistrationConfirmation(params: {
 
       <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
         <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${params.eventTitle}</h2>
+        ${params.startNumber ? `<p style="margin: 0 0 8px; font-size: 16px;"><strong style="color: #ff6b35;">Numer startowy: ${params.startNumber}</strong></p>` : ''}
         <p style="margin: 0 0 6px; font-size: 14px;">&#128197; ${date}</p>
         ${params.eventLocation ? `<p style="margin: 0 0 12px; font-size: 14px;">&#128205; ${params.eventLocation}</p>` : ''}
         <p style="margin: 0 0 6px; font-size: 13px; color: #aaa;">Wybrane dyscypliny:</p>

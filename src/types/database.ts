@@ -91,6 +91,7 @@ export interface EventRegistration {
   registered_at: string
   status: 'registered' | 'confirmed' | 'cancelled'
   paid: boolean
+  start_number: number | null
   member?: Member
 }
 

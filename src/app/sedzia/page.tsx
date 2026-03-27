@@ -45,6 +45,13 @@ export default function JudgePage() {
   // Already scored disciplines per member
   const [scoredDisciplines, setScoredDisciplines] = useState<Map<string, Set<string>>>(new Map())
 
+  // Start number mapping: member_id -> start_number, and reverse
+  const [startNumbers, setStartNumbers] = useState<Map<string, number>>(new Map())
+  const [startNumberInput, setStartNumberInput] = useState('')
+  const [showQrScanner, setShowQrScanner] = useState(false)
+  const qrVideoRef = useRef<HTMLVideoElement>(null)
+  const qrStreamRef = useRef<MediaStream | null>(null)
+
   // Event settings
   const [allowTargetPhotos, setAllowTargetPhotos] = useState(true)
 
@@ -139,18 +146,28 @@ export default function JudgePage() {
     const [regsRes, edRes, resultsRes] = await Promise.all([
       supabase
         .from('event_registrations')
-        .select('member:members(*)')
+        .select('member:members(*), start_number')
         .eq('event_id', eventId)
         .neq('status', 'cancelled'),
       supabase.from('event_disciplines').select('id, discipline_id, discipline:disciplines(id, name, scoring_type)').eq('event_id', eventId),
       supabase.from('results').select('member_id, discipline_id').eq('event_id', eventId),
     ])
 
-    const registeredMembers = ((regsRes.data ?? []) as any[])
+    const regs = (regsRes.data ?? []) as any[]
+    const registeredMembers = regs
       .map(r => r.member)
       .filter(Boolean)
       .sort((a: Member, b: Member) => a.full_name.localeCompare(b.full_name))
     setMembers(registeredMembers as Member[])
+
+    // Build start number map
+    const snMap = new Map<string, number>()
+    for (const r of regs) {
+      if (r.member?.id && r.start_number) {
+        snMap.set(r.member.id, r.start_number)
+      }
+    }
+    setStartNumbers(snMap)
 
     const eds = (edRes.data ?? []) as unknown as EventDisciplineRow[]
     setEventDisciplines(eds)
@@ -463,14 +480,95 @@ export default function JudgePage() {
     setSelectedMember(null)
     setSelectedDiscipline(null)
     setMemberSearch('')
+    setStartNumberInput('')
+    stopQrScanner()
     resetForm()
     setStep('select-member')
+  }
+
+  // Find member by start number and auto-select
+  function findByStartNumber(num: number) {
+    const memberId = Array.from(startNumbers.entries()).find(([, sn]) => sn === num)?.[0]
+    if (!memberId) return
+    const m = members.find(m => m.id === memberId)
+    if (m) selectMember(m)
+  }
+
+  function handleStartNumberSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const num = parseInt(startNumberInput)
+    if (!num) return
+    findByStartNumber(num)
+    setStartNumberInput('')
+  }
+
+  // QR Scanner
+  async function startQrScanner() {
+    setShowQrScanner(true)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      qrStreamRef.current = stream
+      if (qrVideoRef.current) {
+        qrVideoRef.current.srcObject = stream
+        qrVideoRef.current.play()
+      }
+      // Poll for QR codes using BarcodeDetector (available in Chrome/Safari)
+      if ('BarcodeDetector' in window) {
+        const detector = new (window as any).BarcodeDetector({ formats: ['qr_code'] })
+        const scanLoop = async () => {
+          if (!qrVideoRef.current || !qrStreamRef.current) return
+          try {
+            const codes = await detector.detect(qrVideoRef.current)
+            if (codes.length > 0) {
+              const value = codes[0].rawValue
+              handleQrResult(value)
+              return
+            }
+          } catch {}
+          if (qrStreamRef.current) requestAnimationFrame(scanLoop)
+        }
+        // Wait for video to be ready
+        qrVideoRef.current?.addEventListener('loadeddata', () => {
+          requestAnimationFrame(scanLoop)
+        }, { once: true })
+      }
+    } catch (err) {
+      console.error('Camera error:', err)
+      setShowQrScanner(false)
+    }
+  }
+
+  function stopQrScanner() {
+    if (qrStreamRef.current) {
+      qrStreamRef.current.getTracks().forEach(t => t.stop())
+      qrStreamRef.current = null
+    }
+    setShowQrScanner(false)
+  }
+
+  function handleQrResult(value: string) {
+    stopQrScanner()
+    // QR format: "START-{eventId}-{startNumber}" or just a number
+    const startMatch = value.match(/START-[^-]+-(\d+)/)
+    if (startMatch) {
+      findByStartNumber(parseInt(startMatch[1]))
+      return
+    }
+    const num = parseInt(value)
+    if (!isNaN(num)) {
+      findByStartNumber(num)
+      return
+    }
+    // Try matching by member QR code or license
+    const m = members.find(m => m.qr_code === value || m.license_number === value)
+    if (m) selectMember(m)
   }
 
   const filteredMembers = members.filter(m =>
     m.full_name.toLowerCase().includes(memberSearch.toLowerCase()) ||
     m.license_number?.toLowerCase().includes(memberSearch.toLowerCase()) ||
-    m.qr_code?.toLowerCase().includes(memberSearch.toLowerCase())
+    m.qr_code?.toLowerCase().includes(memberSearch.toLowerCase()) ||
+    (startNumbers.get(m.id)?.toString() ?? '').includes(memberSearch)
   )
 
   const inputClass = "w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
@@ -590,13 +688,51 @@ export default function JudgePage() {
           </div>
         </div>
 
+        {/* Quick entry: start number or QR scan */}
+        <div className="bg-card border border-primary/30 rounded-xl p-4 mb-4">
+          <div className="flex gap-2">
+            <form onSubmit={handleStartNumberSubmit} className="flex-1 flex gap-2">
+              <div className="relative flex-1">
+                <Hash className="w-4 h-4 text-muted absolute left-3 top-3" />
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={startNumberInput}
+                  onChange={e => setStartNumberInput(e.target.value)}
+                  placeholder="Nr startowy"
+                  className="w-full bg-background border border-border rounded-lg pl-9 pr-4 py-2.5 text-foreground placeholder:text-muted focus:outline-none focus:border-primary text-lg font-mono"
+                />
+              </div>
+              <button type="submit" className="px-4 py-2.5 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors">
+                OK
+              </button>
+            </form>
+            <button
+              onClick={showQrScanner ? stopQrScanner : startQrScanner}
+              className={`px-4 py-2.5 border rounded-lg transition-colors flex items-center gap-2 ${
+                showQrScanner ? 'border-danger text-danger' : 'border-border text-foreground hover:border-primary/30'
+              }`}
+            >
+              <Camera className="w-5 h-5" />
+              <span className="text-sm hidden sm:inline">{showQrScanner ? 'Zamknij' : 'Skanuj QR'}</span>
+            </button>
+          </div>
+
+          {showQrScanner && (
+            <div className="mt-3">
+              <video ref={qrVideoRef} className="w-full rounded-lg border border-border" style={{ maxHeight: 240 }} playsInline muted />
+              <p className="text-xs text-muted mt-1 text-center">Skieruj kamerę na kod QR zawodnika</p>
+            </div>
+          )}
+        </div>
+
         <div className="relative mb-4">
           <Search className="w-5 h-5 text-muted absolute left-3 top-3" />
           <input
             type="text"
             value={memberSearch}
             onChange={e => setMemberSearch(e.target.value)}
-            placeholder="Szukaj po nazwisku, licencji lub kodzie QR..."
+            placeholder="Szukaj po nazwisku, licencji, numerze startowym..."
             className="w-full bg-card border border-border rounded-lg pl-10 pr-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
           />
         </div>
@@ -617,6 +753,7 @@ export default function JudgePage() {
           {filteredMembers.map(m => {
             const available = getAvailableDisciplines(m.id)
             const allDone = eventDisciplines.length > 0 && available.length === 0
+            const sn = startNumbers.get(m.id)
             return (
               <button
                 key={m.id}
@@ -626,8 +763,8 @@ export default function JudgePage() {
                   allDone ? 'border-success/30 opacity-60 cursor-default' : 'border-border hover:border-primary/30'
                 }`}
               >
-                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold flex-shrink-0">
-                  {m.full_name.charAt(0)}
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold font-mono flex-shrink-0 text-lg">
+                  {sn ?? '–'}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="font-medium">{m.full_name}</div>
