@@ -292,21 +292,24 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
       slotIdx >= dragSelection.minSlot && slotIdx <= dragSelection.maxSlot
   }
 
-  // Track if mouse actually moved during drag (to distinguish click from drag on desktop)
-  const didDrag = useRef(false)
+  // Desktop drag-to-select uses pointer events to distinguish mouse from touch.
+  // Touch/click uses tap-to-select: 1st tap = start, 2nd tap = end.
+  const pointerIsMouse = useRef(false)
 
-  // Desktop: drag-to-select (mousedown → mousemove → mouseup)
-  const handleDragStart = (sn: number, slotIdx: number) => {
+  const handlePointerDown = (sn: number, slotIdx: number, pointerType: string) => {
     if (isPast) return
-    isDragging.current = true
-    didDrag.current = false
-    setDragStart({ sn, slotIdx })
-    setDragEnd({ sn, slotIdx })
+    if (pointerType === 'mouse') {
+      // Desktop: start drag
+      pointerIsMouse.current = true
+      isDragging.current = true
+      setDragStart({ sn, slotIdx })
+      setDragEnd({ sn, slotIdx })
+    }
+    // Touch: do nothing here — onClick will handle tap-to-select
   }
 
   const handleDragMove = (sn: number, slotIdx: number) => {
     if (!isDragging.current) return
-    didDrag.current = true
     setDragEnd({ sn, slotIdx })
   }
 
@@ -317,31 +320,31 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
     }
     isDragging.current = false
 
-    // Only open booking if user actually dragged (moved to different cell)
-    if (didDrag.current && (dragStart.sn !== dragEnd.sn || dragStart.slotIdx !== dragEnd.slotIdx)) {
-      openBookingFromSelection(dragStart, dragEnd)
-      setDragStart(null)
-      setDragEnd(null)
-    }
-    // If didn't drag — leave selection, let onClick handle it as tap
+    // Open booking from drag selection
+    openBookingFromSelection(dragStart, dragEnd)
+    setDragStart(null)
+    setDragEnd(null)
+    // Block the upcoming click event from re-triggering
+    pointerIsMouse.current = true
+    setTimeout(() => { pointerIsMouse.current = false }, 50)
   }
 
-  // Click handler: tap-to-select (works on both mobile and desktop)
+  // Click handler: tap-to-select (primarily for touch, also works as fallback)
   // 1st click = start, 2nd click = end → open booking
   const handleSlotClick = (sn: number, slotIdx: number) => {
     if (isPast) return
-    // If drag just completed (moved cells), skip — already handled in handleDragEnd
-    if (didDrag.current && dragStart === null) {
-      didDrag.current = false
+    // Skip if this click came from a mouse drag-end (already handled)
+    if (pointerIsMouse.current) {
+      pointerIsMouse.current = false
       return
     }
 
     if (!dragStart) {
-      // First click — mark start
+      // First tap — mark start
       setDragStart({ sn, slotIdx })
       setDragEnd({ sn, slotIdx })
     } else {
-      // Second click — mark end and open booking
+      // Second tap — mark end and open booking
       const end = { sn, slotIdx }
       openBookingFromSelection(dragStart, end)
       setDragStart(null)
@@ -376,7 +379,7 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
     }
   }
 
-  // Global mouseup listener to end drag
+  // Global mouseup listener to end drag (desktop only)
   useEffect(() => {
     const onUp = () => {
       if (isDragging.current) handleDragEnd()
@@ -1004,9 +1007,8 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
                               <td
                                 key={slotTime}
                                 className="py-0.5 px-0.5 border-l border-border/30 select-none"
-                                onMouseDown={e => { e.preventDefault(); canBook && handleDragStart(sn, slotIdx) }}
+                                onPointerDown={e => { e.preventDefault(); canBook && handlePointerDown(sn, slotIdx, e.pointerType) }}
                                 onMouseEnter={() => canBook && handleDragMove(sn, slotIdx)}
-                                onMouseUp={() => canBook && handleDragEnd()}
                                 onClick={() => canBook && handleSlotClick(sn, slotIdx)}
                                 title={tooClose ? `Rezerwacja online min. ${selectedLane?.min_advance_minutes ?? 60} min wcześniej` : undefined}
                               >
