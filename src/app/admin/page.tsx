@@ -126,12 +126,27 @@ interface LaneReservation {
 
 type Tab = 'events' | 'disciplines' | 'judges' | 'registrations' | 'inventory' | 'regulations' | 'ranges' | 'instructors'
 
+const TIME_OPTIONS: string[] = []
+for (let h = 6; h <= 22; h++) {
+  TIME_OPTIONS.push(`${String(h).padStart(2, '0')}:00`)
+  TIME_OPTIONS.push(`${String(h).padStart(2, '0')}:30`)
+}
+
+function TimeSelect({ value, onChange, className, required }: { value: string; onChange: (v: string) => void; className?: string; required?: boolean }) {
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} className={className} required={required}>
+      {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+    </select>
+  )
+}
+
 export default function AdminPage() {
   const { member, loading } = useAuth()
   const router = useRouter()
   const supabase = createSupabaseBrowser()
 
   const [tab, setTab] = useState<Tab>('events')
+  const [rangeSubTab, setRangeSubTab] = useState<'lanes' | 'packages' | 'weapons'>('lanes')
   const [events, setEvents] = useState<EventRow[]>([])
   const [disciplines, setDisciplines] = useState<Discipline[]>([])
   const [judges, setJudges] = useState<Member[]>([])
@@ -2287,14 +2302,14 @@ export default function AdminPage() {
                       <input required type="date" value={eventForm.start_day} onChange={e => {
                         setEventForm(f => ({ ...f, start_day: e.target.value, end_day: f.end_day || e.target.value }))
                       }} className={inputClass} />
-                      <input required type="time" value={eventForm.start_time} onChange={e => setEventForm(f => ({ ...f, start_time: e.target.value }))} className={inputClass} />
+                      <TimeSelect required value={eventForm.start_time} onChange={v => setEventForm(f => ({ ...f, start_time: v }))} className={inputClass} />
                     </div>
                   </div>
                   <div>
                     <label className="text-xs text-muted block mb-1">Data i godzina zakończenia</label>
                     <div className="grid grid-cols-2 gap-2">
                       <input type="date" value={eventForm.end_day} min={eventForm.start_day} onChange={e => setEventForm(f => ({ ...f, end_day: e.target.value }))} className={inputClass} />
-                      <input type="time" value={eventForm.end_time} onChange={e => setEventForm(f => ({ ...f, end_time: e.target.value }))} className={inputClass} />
+                      <TimeSelect value={eventForm.end_time} onChange={v => setEventForm(f => ({ ...f, end_time: v }))} className={inputClass} />
                     </div>
                   </div>
                   <div>
@@ -4058,6 +4073,31 @@ export default function AdminPage() {
       {/* ============ RANGES TAB ============ */}
       {tab === 'ranges' && (
         <div>
+          {/* Sub-tabs */}
+          <div className="flex gap-2 mb-6 border-b border-border">
+            {[
+              { key: 'lanes', label: 'Osie i rezerwacje', icon: Crosshair },
+              { key: 'packages', label: 'Pakiety', icon: Package },
+              { key: 'weapons', label: 'Broń klubowa', icon: Target },
+            ].map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                onClick={() => setRangeSubTab(key as any)}
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px whitespace-nowrap ${
+                  rangeSubTab === key
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-muted hover:text-foreground'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Sub-tab: Osie i rezerwacje */}
+          {rangeSubTab === 'lanes' && (
+          <div>
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold">Osie strzeleckie ({shootingLanes.length})</h2>
             <div className="flex gap-2">
@@ -4163,8 +4203,12 @@ export default function AdminPage() {
             )}
           </div>
 
-          {/* Pakiety strzeleckie */}
-          <div className="border-t border-border pt-6 mt-6">
+          </div>
+          )}
+
+          {/* Sub-tab: Pakiety */}
+          {rangeSubTab === 'packages' && (
+          <div>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">Pakiety strzeleckie ({shootingPackages.length})</h3>
               <button onClick={openNewPackage} className="px-3 py-1.5 bg-primary text-background text-xs font-semibold rounded-lg hover:bg-primary-dark">+ Dodaj pakiet</button>
@@ -4201,7 +4245,6 @@ export default function AdminPage() {
                 ))}
               </div>
             )}
-          </div>
 
           {/* Modal pakietu */}
           {showPackageForm && (
@@ -4255,8 +4298,12 @@ export default function AdminPage() {
             </div>
           )}
 
-          {/* Broń klubowa */}
-          <div className="border-t border-border pt-6 mt-6">
+          </div>
+          )}
+
+          {/* Sub-tab: Broń klubowa */}
+          {rangeSubTab === 'weapons' && (
+          <div>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">Broń klubowa ({rangeWeapons.length})</h3>
               <button
@@ -4336,7 +4383,6 @@ export default function AdminPage() {
                 })}
               </div>
             )}
-          </div>
 
           {/* Modal: nowa/edycja broń */}
           {showWeaponForm && (
@@ -4397,6 +4443,9 @@ export default function AdminPage() {
             </div>
           )}
 
+          </div>
+          )}
+
           {/* Modal: nowy wpis grafiku instruktora */}
           {showInstructorScheduleForm && (
             <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowInstructorScheduleForm(false)}>
@@ -4434,21 +4483,11 @@ export default function AdminPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-sm text-muted mb-1">Od</label>
-                      <input
-                        type="time"
-                        value={instructorScheduleForm.start_time}
-                        onChange={e => setInstructorScheduleForm(f => ({ ...f, start_time: e.target.value }))}
-                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
-                      />
+                      <TimeSelect value={instructorScheduleForm.start_time} onChange={v => setInstructorScheduleForm(f => ({ ...f, start_time: v }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
                     </div>
                     <div>
                       <label className="block text-sm text-muted mb-1">Do</label>
-                      <input
-                        type="time"
-                        value={instructorScheduleForm.end_time}
-                        onChange={e => setInstructorScheduleForm(f => ({ ...f, end_time: e.target.value }))}
-                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
-                      />
+                      <TimeSelect value={instructorScheduleForm.end_time} onChange={v => setInstructorScheduleForm(f => ({ ...f, end_time: v }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
                     </div>
                   </div>
                 </div>
@@ -4490,11 +4529,11 @@ export default function AdminPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-sm text-muted mb-1">Otwarcie</label>
-                      <input type="time" value={laneForm.open_time} onChange={e => setLaneForm(f => ({ ...f, open_time: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                      <TimeSelect value={laneForm.open_time} onChange={v => setLaneForm(f => ({ ...f, open_time: v }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
                     </div>
                     <div>
                       <label className="block text-sm text-muted mb-1">Zamknięcie</label>
-                      <input type="time" value={laneForm.close_time} onChange={e => setLaneForm(f => ({ ...f, close_time: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                      <TimeSelect value={laneForm.close_time} onChange={v => setLaneForm(f => ({ ...f, close_time: v }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
                     </div>
                   </div>
                   <div>
@@ -4561,11 +4600,11 @@ export default function AdminPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-sm text-muted mb-1">Od</label>
-                      <input type="time" value={eventBlockForm.start_time} onChange={e => setEventBlockForm(f => ({ ...f, start_time: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                      <TimeSelect value={eventBlockForm.start_time} onChange={v => setEventBlockForm(f => ({ ...f, start_time: v }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
                     </div>
                     <div>
                       <label className="block text-sm text-muted mb-1">Do</label>
-                      <input type="time" value={eventBlockForm.end_time} onChange={e => setEventBlockForm(f => ({ ...f, end_time: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                      <TimeSelect value={eventBlockForm.end_time} onChange={v => setEventBlockForm(f => ({ ...f, end_time: v }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
                     </div>
                   </div>
                   <div>
