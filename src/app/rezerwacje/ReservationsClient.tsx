@@ -15,6 +15,7 @@ interface Lane {
   price_per_hour_pln: number
   open_time: string
   close_time: string
+  min_advance_minutes: number
 }
 
 interface Reservation {
@@ -358,6 +359,19 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
 
   const isRangeStaff = member && (member.role === 'admin' || member.role === 'registrar' || member.role === 'range_registrar')
 
+  // Check if a slot is too close for online booking (only staff can book)
+  const isSlotTooClose = (slotTime: string) => {
+    if (isRangeStaff) return false // staff can always book
+    if (!selectedLane) return false
+    const minAdvance = selectedLane.min_advance_minutes ?? 60
+    if (minAdvance === 0) return false
+    const now = new Date()
+    const slotDate = new Date(selectedDate + 'T' + slotTime + ':00')
+    const diffMs = slotDate.getTime() - now.getTime()
+    const diffMin = diffMs / 60000
+    return diffMin < minAdvance
+  }
+
   const getSlotLabel = (res: Reservation) => {
     if (res.event_id) return res.event?.title || 'Zawody'
     // Imię widoczne tylko dla właściciela rezerwacji lub admina/rejestratora
@@ -699,6 +713,10 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
           <span className="w-4 h-4 rounded bg-blue-500/30 border border-blue-500/50" />
           <span>Zawody</span>
         </div>
+        <div className="flex items-center gap-2">
+          <span className="w-4 h-4 rounded bg-orange-500/10 border border-orange-500/20" />
+          <span>Tylko na miejscu</span>
+        </div>
       </div>
 
       {lanes.length === 0 ? (
@@ -928,7 +946,8 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
                             }
 
                             // Wolny slot
-                            const canBook = !isPast
+                            const tooClose = isSlotTooClose(slotTime)
+                            const canBook = !isPast && !tooClose
                             const slotIdx = slots.indexOf(slotTime)
                             const inSelection = canBook && isInDragSelection(sn, slotIdx)
                             return (
@@ -938,14 +957,17 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
                                 onMouseDown={e => { e.preventDefault(); canBook && handleDragStart(sn, slotIdx) }}
                                 onMouseEnter={() => canBook && handleDragMove(sn, slotIdx)}
                                 onMouseUp={() => canBook && handleDragEnd()}
+                                title={tooClose ? `Rezerwacja online min. ${selectedLane?.min_advance_minutes ?? 60} min wcześniej` : undefined}
                               >
                                 <div
                                   className={`rounded h-10 border transition-all ${
                                     inSelection
                                       ? 'bg-primary/30 border-primary/60 ring-1 ring-primary/40'
-                                      : canBook
-                                        ? 'bg-green-500/15 border-green-500/30 hover:bg-green-500/30 hover:border-green-500/50 cursor-pointer'
-                                        : 'bg-green-500/10 border-green-500/20'
+                                      : tooClose
+                                        ? 'bg-orange-500/10 border-orange-500/20 cursor-not-allowed'
+                                        : canBook
+                                          ? 'bg-green-500/15 border-green-500/30 hover:bg-green-500/30 hover:border-green-500/50 cursor-pointer'
+                                          : 'bg-green-500/10 border-green-500/20'
                                   }`}
                                 />
                               </td>

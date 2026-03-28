@@ -187,7 +187,7 @@ export default function AdminPage() {
   const [shootingLanes, setShootingLanes] = useState<ShootingLane[]>([])
   const [showLaneForm, setShowLaneForm] = useState(false)
   const [editingLane, setEditingLane] = useState<ShootingLane | null>(null)
-  const [laneForm, setLaneForm] = useState({ name: '', length_m: '25', stations_count: '5', description: '', price_per_hour_pln: '0', is_active: true, open_time: '08:00', close_time: '20:00' })
+  const [laneForm, setLaneForm] = useState({ name: '', length_m: '25', stations_count: '5', description: '', price_per_hour_pln: '0', is_active: true, open_time: '08:00', close_time: '20:00', min_advance_minutes: '60' })
   const [laneReservations, setLaneReservations] = useState<LaneReservation[]>([])
   const [laneResDate, setLaneResDate] = useState(() => new Date().toISOString().split('T')[0])
   const [laneResFilter, setLaneResFilter] = useState<string>('all')
@@ -199,6 +199,12 @@ export default function AdminPage() {
   const [showWeaponForm, setShowWeaponForm] = useState(false)
   const [editingWeapon, setEditingWeapon] = useState<any | null>(null)
   const [weaponForm, setWeaponForm] = useState({ name: '', type: 'pistol', caliber: '', description: '', status: 'draft', inventory_ammo_id: '' })
+
+  // Shooting packages CRUD
+  const [shootingPackages, setShootingPackages] = useState<{ id: string; name: string; description: string | null; weapon_id: string; ammo_count: number; duration_minutes: number; price_pln: number; is_active: boolean }[]>([])
+  const [showPackageForm, setShowPackageForm] = useState(false)
+  const [editingPackage, setEditingPackage] = useState<any | null>(null)
+  const [packageForm, setPackageForm] = useState({ name: '', description: '', weapon_id: '', ammo_count: '50', duration_minutes: '60', price_pln: '0', is_active: true })
 
   // Instructor schedule
   const [instructorAvailability, setInstructorAvailability] = useState<{ id: string; instructor_id: string; day_of_week: number; start_time: string; end_time: string; is_active: boolean; instructor?: { full_name: string } }[]>([])
@@ -304,8 +310,9 @@ export default function AdminPage() {
     setEventSlots((slotsRes.data ?? []) as EventDisciplineSlot[])
     setInventoryItems((invRes.data ?? []) as InventoryItem[])
     setRegulations((regRes.data ?? []) as Regulation[])
-    // Also load shooting lanes (needed for event lane blocking)
+    // Also load shooting lanes, weapons, packages (needed for event lane blocking & range management)
     loadShootingLanes()
+    loadShootingPackages()
   }
 
   async function loadOnlineUsers() {
@@ -340,7 +347,7 @@ export default function AdminPage() {
 
   function openNewLane() {
     setEditingLane(null)
-    setLaneForm({ name: '', length_m: '25', stations_count: '5', description: '', price_per_hour_pln: '0', is_active: true, open_time: '08:00', close_time: '20:00' })
+    setLaneForm({ name: '', length_m: '25', stations_count: '5', description: '', price_per_hour_pln: '0', is_active: true, open_time: '08:00', close_time: '20:00', min_advance_minutes: '60' })
     setShowLaneForm(true)
   }
 
@@ -355,6 +362,7 @@ export default function AdminPage() {
       is_active: lane.is_active,
       open_time: (lane as any).open_time?.slice(0, 5) || '08:00',
       close_time: (lane as any).close_time?.slice(0, 5) || '20:00',
+      min_advance_minutes: String((lane as any).min_advance_minutes ?? 60),
     })
     setShowLaneForm(true)
   }
@@ -369,6 +377,7 @@ export default function AdminPage() {
       is_active: laneForm.is_active,
       open_time: laneForm.open_time,
       close_time: laneForm.close_time,
+      min_advance_minutes: parseInt(laneForm.min_advance_minutes) || 60,
     }
     if (editingLane) {
       await supabase.from('shooting_lanes').update(payload).eq('id', editingLane.id)
@@ -452,6 +461,62 @@ export default function AdminPage() {
   async function updateWeaponStatus(id: string, status: string) {
     await supabase.from('range_weapons').update({ status, is_active: status === 'in_stock' }).eq('id', id)
     loadRangeWeapons()
+  }
+
+  // Shooting packages CRUD
+  async function loadShootingPackages() {
+    const { data } = await supabase.from('shooting_packages').select('*').order('name')
+    setShootingPackages((data ?? []) as any[])
+  }
+
+  function openNewPackage() {
+    setEditingPackage(null)
+    setPackageForm({ name: '', description: '', weapon_id: '', ammo_count: '50', duration_minutes: '60', price_pln: '0', is_active: true })
+    setShowPackageForm(true)
+  }
+
+  function openEditPackage(pkg: any) {
+    setEditingPackage(pkg)
+    setPackageForm({
+      name: pkg.name,
+      description: pkg.description || '',
+      weapon_id: pkg.weapon_id || '',
+      ammo_count: String(pkg.ammo_count),
+      duration_minutes: String(pkg.duration_minutes),
+      price_pln: String(pkg.price_pln),
+      is_active: pkg.is_active,
+    })
+    setShowPackageForm(true)
+  }
+
+  async function savePackage() {
+    const payload = {
+      name: packageForm.name,
+      description: packageForm.description || null,
+      weapon_id: packageForm.weapon_id || null,
+      ammo_count: parseInt(packageForm.ammo_count) || 0,
+      duration_minutes: parseInt(packageForm.duration_minutes) || 60,
+      price_pln: parseFloat(packageForm.price_pln) || 0,
+      is_active: packageForm.is_active,
+    }
+    if (editingPackage) {
+      await supabase.from('shooting_packages').update(payload).eq('id', editingPackage.id)
+    } else {
+      await supabase.from('shooting_packages').insert(payload)
+    }
+    setShowPackageForm(false)
+    loadShootingPackages()
+  }
+
+  async function deletePackage(id: string) {
+    if (!confirm('Usunąć pakiet?')) return
+    await supabase.from('shooting_packages').delete().eq('id', id)
+    loadShootingPackages()
+  }
+
+  async function togglePackageActive(id: string, active: boolean) {
+    await supabase.from('shooting_packages').update({ is_active: !active }).eq('id', id)
+    loadShootingPackages()
   }
 
   async function loadInstructorSchedule() {
@@ -4072,6 +4137,98 @@ export default function AdminPage() {
             )}
           </div>
 
+          {/* Pakiety strzeleckie */}
+          <div className="border-t border-border pt-6 mt-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Pakiety strzeleckie ({shootingPackages.length})</h3>
+              <button onClick={openNewPackage} className="px-3 py-1.5 bg-primary text-background text-xs font-semibold rounded-lg hover:bg-primary-dark">+ Dodaj pakiet</button>
+            </div>
+            {shootingPackages.length === 0 ? (
+              <p className="text-muted text-sm">Brak pakietów. Dodaj pierwszy.</p>
+            ) : (
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {shootingPackages.map(pkg => (
+                  <div key={pkg.id} className={`bg-card border rounded-xl p-4 ${pkg.is_active ? 'border-border' : 'border-border/30 opacity-60'}`}>
+                    <div className="flex items-start justify-between mb-2">
+                      <div>
+                        <h4 className="font-semibold text-sm">{pkg.name}</h4>
+                        <p className="text-xs text-muted">{rangeWeapons.find(w => w.id === pkg.weapon_id)?.name || '—'}</p>
+                      </div>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${pkg.is_active ? 'bg-green-500/20 text-green-400' : 'bg-zinc-500/20 text-zinc-400'}`}>
+                        {pkg.is_active ? 'Aktywny' : 'Nieaktywny'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-muted mb-2">
+                      <span>{pkg.ammo_count} szt.</span>
+                      <span>{pkg.duration_minutes} min</span>
+                      <span className="font-semibold text-primary">{Number(pkg.price_pln).toFixed(0)} zł</span>
+                    </div>
+                    {pkg.description && <p className="text-xs text-muted mb-2 line-clamp-2">{pkg.description}</p>}
+                    <div className="flex gap-1">
+                      <button onClick={() => openEditPackage(pkg)} className="text-xs px-2 py-1 border border-border rounded hover:bg-background">Edytuj</button>
+                      <button onClick={() => togglePackageActive(pkg.id, pkg.is_active)} className="text-xs px-2 py-1 border border-border rounded hover:bg-background">
+                        {pkg.is_active ? 'Dezaktywuj' : 'Aktywuj'}
+                      </button>
+                      <button onClick={() => deletePackage(pkg.id)} className="text-xs px-2 py-1 border border-red-500/30 text-red-400 rounded hover:bg-red-500/10">Usuń</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Modal pakietu */}
+          {showPackageForm && (
+            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+              <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md">
+                <h3 className="text-lg font-bold mb-4">{editingPackage ? 'Edytuj pakiet' : 'Nowy pakiet'}</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Nazwa *</label>
+                    <input value={packageForm.name} onChange={e => setPackageForm(f => ({ ...f, name: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" placeholder="np. Pistolet 9mm Standard" />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Broń</label>
+                    <select value={packageForm.weapon_id} onChange={e => setPackageForm(f => ({ ...f, weapon_id: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm">
+                      <option value="">— brak —</option>
+                      {rangeWeapons.filter(w => w.status === 'in_stock').map(w => (
+                        <option key={w.id} value={w.id}>{w.name} ({w.caliber})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-sm text-muted mb-1">Amunicja (szt.)</label>
+                      <input type="number" value={packageForm.ammo_count} onChange={e => setPackageForm(f => ({ ...f, ammo_count: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-muted mb-1">Czas (min)</label>
+                      <input type="number" value={packageForm.duration_minutes} onChange={e => setPackageForm(f => ({ ...f, duration_minutes: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-muted mb-1">Cena (zł)</label>
+                      <input type="number" step="0.01" value={packageForm.price_pln} onChange={e => setPackageForm(f => ({ ...f, price_pln: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Opis</label>
+                    <textarea value={packageForm.description} onChange={e => setPackageForm(f => ({ ...f, description: e.target.value }))} rows={2} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm resize-none" placeholder="Opis pakietu..." />
+                  </div>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={packageForm.is_active} onChange={e => setPackageForm(f => ({ ...f, is_active: e.target.checked }))} className="rounded" />
+                    Aktywny (widoczny dla klientów)
+                  </label>
+                </div>
+                <div className="flex gap-2 mt-6">
+                  <button onClick={() => setShowPackageForm(false)} className="flex-1 px-4 py-2.5 border border-border rounded-lg text-sm font-medium hover:bg-background">Anuluj</button>
+                  <button onClick={savePackage} disabled={!packageForm.name} className="flex-1 px-4 py-2.5 bg-primary text-background rounded-lg text-sm font-semibold hover:bg-primary-dark disabled:opacity-50">
+                    {editingPackage ? 'Zapisz' : 'Dodaj'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Broń klubowa */}
           <div className="border-t border-border pt-6 mt-6">
             <div className="flex items-center justify-between mb-4">
@@ -4317,6 +4474,20 @@ export default function AdminPage() {
                   <div>
                     <label className="block text-sm text-muted mb-1">Cena za godzinę (zł)</label>
                     <input type="number" step="0.01" value={laneForm.price_per_hour_pln} onChange={e => setLaneForm(f => ({ ...f, price_per_hour_pln: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                  <div>
+                    <label className="block text-sm text-muted mb-1">Min. wyprzedzenie rezerwacji online</label>
+                    <select value={laneForm.min_advance_minutes} onChange={e => setLaneForm(f => ({ ...f, min_advance_minutes: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm">
+                      <option value="0">Bez ograniczeń</option>
+                      <option value="30">30 minut</option>
+                      <option value="60">1 godzina</option>
+                      <option value="120">2 godziny</option>
+                      <option value="180">3 godziny</option>
+                      <option value="360">6 godzin</option>
+                      <option value="720">12 godzin</option>
+                      <option value="1440">24 godziny (dzień wcześniej)</option>
+                    </select>
+                    <p className="text-[10px] text-muted mt-1">Sloty bliższe niż ten czas są dostępne tylko dla rejestratora na miejscu</p>
                   </div>
                   <div>
                     <label className="block text-sm text-muted mb-1">Opis (opcjonalnie)</label>
