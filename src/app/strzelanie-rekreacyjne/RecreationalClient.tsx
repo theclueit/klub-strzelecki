@@ -82,9 +82,26 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
   const [guestForm, setGuestForm] = useState({ name: '', email: '', phone: '', address: '', document: '' })
   const [notes, setNotes] = useState('')
   const [bookingSuccess, setBookingSuccess] = useState(false)
-  const [cart, setCart] = useState<CartItem[]>([])
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    if (typeof window === 'undefined') return []
+    try {
+      const saved = sessionStorage.getItem('rec-cart')
+      return saved ? JSON.parse(saved) : []
+    } catch { return [] }
+  })
   const [showCart, setShowCart] = useState(false)
   const [sameDayPrompt, setSameDayPrompt] = useState(false)
+
+  // Persist koszyka w sessionStorage
+  useEffect(() => {
+    try {
+      if (cart.length > 0) {
+        sessionStorage.setItem('rec-cart', JSON.stringify(cart))
+      } else {
+        sessionStorage.removeItem('rec-cart')
+      }
+    } catch {}
+  }, [cart])
 
   // On-site booking (registrar only)
   const isRangeStaff = member && ['admin', 'registrar', 'range_registrar'].includes(member.role)
@@ -349,12 +366,18 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
     return { slot: nextSlot, gapMin }
   }, [lastCartEndMin, availableSlots])
 
-  // Auto-select najbliższego slotu po załadowaniu (gdy koszyk nie jest pusty)
+  // Auto-select: preferuj ciągły slot (gap=0), jeśli brak — najbliższy
   useEffect(() => {
-    if (suggestedSlotInfo && cart.length > 0 && selectedPkg && !selectedSlot) {
-      setSelectedSlot(suggestedSlotInfo.slot)
+    if (cart.length > 0 && selectedPkg && !selectedSlot && lastCartEndMin && availableSlots.length > 0) {
+      // Najpierw szukaj ciągłego (dokładnie po zakończeniu poprzedniego)
+      const continuous = availableSlots.find(s => timeToMin(s.time) === lastCartEndMin)
+      if (continuous) {
+        setSelectedSlot(continuous)
+      } else if (suggestedSlotInfo) {
+        setSelectedSlot(suggestedSlotInfo.slot)
+      }
     }
-  }, [suggestedSlotInfo, cart.length, selectedPkg])
+  }, [suggestedSlotInfo, cart.length, selectedPkg, lastCartEndMin, availableSlots])
 
   const cartTotal = cart.reduce((sum, item) => sum + Number(item.pkg.price_pln), 0)
 
@@ -527,12 +550,19 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
                             </div>
 
                             {/* Info o przerwie */}
-                            {suggestedSlotInfo && suggestedSlotInfo.gapMin > 0 && !loadingSlots && availableSlots.length > 0 && (
-                              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2 text-sm text-yellow-400 mb-2">
-                                <Clock className="w-4 h-4 inline mr-1.5" />
-                                Najbliższy wolny termin o <span className="font-semibold">{suggestedSlotInfo.slot.time}</span> — przerwa {suggestedSlotInfo.gapMin} min od poprzedniego pakietu
-                              </div>
-                            )}
+                            {suggestedSlotInfo && suggestedSlotInfo.gapMin > 0 && !loadingSlots && availableSlots.length > 0 && (() => {
+                              // Sprawdź czy jest slot ciągły (gap=0)
+                              const continuousSlot = availableSlots.find(s => timeToMin(s.time) === lastCartEndMin)
+                              const lastEndH = Math.floor(lastCartEndMin! / 60).toString().padStart(2, '0')
+                              const lastEndM = (lastCartEndMin! % 60).toString().padStart(2, '0')
+                              return continuousSlot ? null : (
+                                <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2 text-sm text-yellow-400 mb-2">
+                                  <Clock className="w-4 h-4 inline mr-1.5" />
+                                  Brak ciągłego terminu od {lastEndH}:{lastEndM}. Najbliższy wolny o <span className="font-semibold">{suggestedSlotInfo.slot.time}</span> — przerwa {suggestedSlotInfo.gapMin} min.
+                                  {' '}Możesz wybrać inny dzień.
+                                </div>
+                              )
+                            })()}
 
                             {/* Godziny */}
                             {loadingSlots ? (
