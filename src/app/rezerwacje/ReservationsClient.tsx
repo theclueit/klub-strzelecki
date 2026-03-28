@@ -120,6 +120,7 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
   const [dragStart, setDragStart] = useState<{ sn: number; slotIdx: number } | null>(null)
   const [dragEnd, setDragEnd] = useState<{ sn: number; slotIdx: number } | null>(null)
   const isDragging = useRef(false)
+  const gridRef = useRef<HTMLTableElement>(null)
 
   // On-site recreational booking (registrar only)
   const [showOnsiteBooking, setShowOnsiteBooking] = useState(false)
@@ -341,14 +342,46 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
     setDragEnd(null)
   }
 
-  // Global mouseup listener to end drag even if mouse leaves the grid
+  // Touch support: resolve touch point to grid cell (sn, slotIdx)
+  const getTouchCell = useCallback((touch: Touch): { sn: number; slotIdx: number } | null => {
+    const el = document.elementFromPoint(touch.clientX, touch.clientY)
+    if (!el) return null
+    const td = el.closest('td[data-sn]') as HTMLElement | null
+    if (!td) return null
+    const sn = parseInt(td.dataset.sn || '')
+    const si = parseInt(td.dataset.si || '')
+    if (isNaN(sn) || isNaN(si)) return null
+    return { sn, slotIdx: si }
+  }, [])
+
+  // Global mouseup + touchend listener to end drag even if leaves grid
   useEffect(() => {
     const onUp = () => {
       if (isDragging.current) handleDragEnd()
     }
     window.addEventListener('mouseup', onUp)
-    return () => window.removeEventListener('mouseup', onUp)
+    window.addEventListener('touchend', onUp)
+    window.addEventListener('touchcancel', onUp)
+    return () => {
+      window.removeEventListener('mouseup', onUp)
+      window.removeEventListener('touchend', onUp)
+      window.removeEventListener('touchcancel', onUp)
+    }
   }, [dragStart, dragEnd, slots, slotMap])
+
+  // Touch move handler on grid (needs to be on the table for cross-cell tracking)
+  useEffect(() => {
+    const table = gridRef.current
+    if (!table) return
+    const onTouchMove = (e: TouchEvent) => {
+      if (!isDragging.current) return
+      e.preventDefault() // prevent scrolling while dragging
+      const cell = getTouchCell(e.touches[0])
+      if (cell) handleDragMove(cell.sn, cell.slotIdx)
+    }
+    table.addEventListener('touchmove', onTouchMove, { passive: false })
+    return () => table.removeEventListener('touchmove', onTouchMove)
+  }, [getTouchCell])
 
   const getSlotColor = (res: Reservation | undefined) => {
     if (!res) return 'bg-green-500/20 border-green-500/40 hover:bg-green-500/30' // wolne
@@ -860,7 +893,7 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
                     Ładowanie...
                   </div>
                 ) : (
-                  <table className="w-full border-collapse select-none" style={{ minWidth: `${120 + slots.length * 40}px` }}>
+                  <table ref={gridRef} className="w-full border-collapse select-none" style={{ minWidth: `${120 + slots.length * 40}px` }}>
                     {/* Nagłówek godzin */}
                     <thead>
                       <tr className="bg-background/50">
@@ -953,10 +986,13 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
                             return (
                               <td
                                 key={slotTime}
+                                data-sn={sn}
+                                data-si={slotIdx}
                                 className="py-0.5 px-0.5 border-l border-border/30 select-none"
                                 onMouseDown={e => { e.preventDefault(); canBook && handleDragStart(sn, slotIdx) }}
                                 onMouseEnter={() => canBook && handleDragMove(sn, slotIdx)}
                                 onMouseUp={() => canBook && handleDragEnd()}
+                                onTouchStart={e => { if (canBook) { e.preventDefault(); handleDragStart(sn, slotIdx) } }}
                                 title={tooClose ? `Rezerwacja online min. ${selectedLane?.min_advance_minutes ?? 60} min wcześniej` : undefined}
                               >
                                 <div
