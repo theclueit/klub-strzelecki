@@ -292,6 +292,7 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
       slotIdx >= dragSelection.minSlot && slotIdx <= dragSelection.maxSlot
   }
 
+  // Desktop: drag-to-select (mousedown → mousemove → mouseup)
   const handleDragStart = (sn: number, slotIdx: number) => {
     if (isPast) return
     isDragging.current = true
@@ -313,19 +314,42 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
     }
     isDragging.current = false
 
+    openBookingFromSelection(dragStart, dragEnd)
+    setDragStart(null)
+    setDragEnd(null)
+  }
+
+  // Mobile: tap-to-select (1st tap = start, 2nd tap = end, tap same = single slot)
+  const handleTap = (sn: number, slotIdx: number) => {
+    if (isPast) return
+    if (!dragStart) {
+      // First tap — mark start
+      setDragStart({ sn, slotIdx })
+      setDragEnd({ sn, slotIdx })
+    } else {
+      // Second tap — mark end and open booking
+      const end = { sn, slotIdx }
+      setDragEnd(end)
+      openBookingFromSelection(dragStart, end)
+      setDragStart(null)
+      setDragEnd(null)
+    }
+  }
+
+  // Shared: open booking modal from two corner points
+  const openBookingFromSelection = (start: { sn: number; slotIdx: number }, end: { sn: number; slotIdx: number }) => {
     const sel = {
-      minSn: Math.min(dragStart.sn, dragEnd.sn),
-      maxSn: Math.max(dragStart.sn, dragEnd.sn),
-      minSlot: Math.min(dragStart.slotIdx, dragEnd.slotIdx),
-      maxSlot: Math.max(dragStart.slotIdx, dragEnd.slotIdx),
+      minSn: Math.min(start.sn, end.sn),
+      maxSn: Math.max(start.sn, end.sn),
+      minSlot: Math.min(start.slotIdx, end.slotIdx),
+      maxSlot: Math.max(start.slotIdx, end.slotIdx),
     }
 
-    // Check all selected slots are free
     const slotCount = sel.maxSlot - sel.minSlot + 1
     let allFree = true
-    for (let sn = sel.minSn; sn <= sel.maxSn; sn++) {
+    for (let s = sel.minSn; s <= sel.maxSn; s++) {
       for (let si = sel.minSlot; si <= sel.maxSlot; si++) {
-        const key = `${sn}-${slots[si]}`
+        const key = `${s}-${slots[si]}`
         if (slotMap[key]) { allFree = false; break }
       }
       if (!allFree) break
@@ -337,51 +361,19 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
       setBookingSlots(slotCount)
       setBookingStations(stationCount)
     }
-
-    setDragStart(null)
-    setDragEnd(null)
   }
 
-  // Touch support: resolve touch point to grid cell (sn, slotIdx)
-  const getTouchCell = useCallback((touch: Touch): { sn: number; slotIdx: number } | null => {
-    const el = document.elementFromPoint(touch.clientX, touch.clientY)
-    if (!el) return null
-    const td = el.closest('td[data-sn]') as HTMLElement | null
-    if (!td) return null
-    const sn = parseInt(td.dataset.sn || '')
-    const si = parseInt(td.dataset.si || '')
-    if (isNaN(sn) || isNaN(si)) return null
-    return { sn, slotIdx: si }
-  }, [])
+  // Detect touch device
+  const isTouchDevice = typeof window !== 'undefined' && 'ontouchstart' in window
 
-  // Global mouseup + touchend listener to end drag even if leaves grid
+  // Global mouseup listener to end drag (desktop only)
   useEffect(() => {
     const onUp = () => {
       if (isDragging.current) handleDragEnd()
     }
     window.addEventListener('mouseup', onUp)
-    window.addEventListener('touchend', onUp)
-    window.addEventListener('touchcancel', onUp)
-    return () => {
-      window.removeEventListener('mouseup', onUp)
-      window.removeEventListener('touchend', onUp)
-      window.removeEventListener('touchcancel', onUp)
-    }
+    return () => window.removeEventListener('mouseup', onUp)
   }, [dragStart, dragEnd, slots, slotMap])
-
-  // Touch move handler on grid (needs to be on the table for cross-cell tracking)
-  useEffect(() => {
-    const table = gridRef.current
-    if (!table) return
-    const onTouchMove = (e: TouchEvent) => {
-      if (!isDragging.current) return
-      e.preventDefault() // prevent scrolling while dragging
-      const cell = getTouchCell(e.touches[0])
-      if (cell) handleDragMove(cell.sn, cell.slotIdx)
-    }
-    table.addEventListener('touchmove', onTouchMove, { passive: false })
-    return () => table.removeEventListener('touchmove', onTouchMove)
-  }, [getTouchCell])
 
   const getSlotColor = (res: Reservation | undefined) => {
     if (!res) return 'bg-green-500/20 border-green-500/40 hover:bg-green-500/30' // wolne
@@ -886,6 +878,21 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
                 </div>
               </div>
 
+              {/* Mobile: tap selection hint */}
+              {isTouchDevice && dragStart && !showBooking && (
+                <div className="flex items-center justify-between bg-primary/10 border border-primary/30 rounded-lg px-4 py-2 mb-2 text-sm">
+                  <span className="text-primary font-medium">
+                    Zaznaczono start: St. {dragStart.sn}, {slots[dragStart.slotIdx]} — kliknij slot końcowy
+                  </span>
+                  <button
+                    onClick={() => { setDragStart(null); setDragEnd(null) }}
+                    className="text-xs text-muted hover:text-foreground ml-3 px-2 py-1 rounded bg-background border border-border"
+                  >
+                    Anuluj
+                  </button>
+                </div>
+              )}
+
               <div className="overflow-x-auto">
                 {loadingRes ? (
                   <div className="flex items-center justify-center py-16 text-muted">
@@ -986,13 +993,11 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
                             return (
                               <td
                                 key={slotTime}
-                                data-sn={sn}
-                                data-si={slotIdx}
                                 className="py-0.5 px-0.5 border-l border-border/30 select-none"
                                 onMouseDown={e => { e.preventDefault(); canBook && handleDragStart(sn, slotIdx) }}
                                 onMouseEnter={() => canBook && handleDragMove(sn, slotIdx)}
                                 onMouseUp={() => canBook && handleDragEnd()}
-                                onTouchStart={e => { if (canBook) { e.preventDefault(); handleDragStart(sn, slotIdx) } }}
+                                onClick={() => canBook && isTouchDevice && handleTap(sn, slotIdx)}
                                 title={tooClose ? `Rezerwacja online min. ${selectedLane?.min_advance_minutes ?? 60} min wcześniej` : undefined}
                               >
                                 <div
