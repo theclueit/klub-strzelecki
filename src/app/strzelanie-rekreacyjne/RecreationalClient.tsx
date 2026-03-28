@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
-import { Target, Clock, CreditCard, CheckCircle, X, Loader2, ChevronLeft, ChevronRight, User, Crosshair, Package } from 'lucide-react'
+import { Target, Clock, CreditCard, CheckCircle, X, Loader2, ChevronLeft, ChevronRight, ChevronDown, User, Crosshair, Package } from 'lucide-react'
 import Link from 'next/link'
 
 interface Weapon {
@@ -391,253 +391,198 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
         </div>
       ) : (
         <>
-          {/* Krok 1: Wybór pakietu */}
-          <div className="mb-8">
-            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <span className="w-7 h-7 bg-primary text-background rounded-full flex items-center justify-center text-sm font-bold">1</span>
-              Wybierz pakiet
-            </h2>
+          <h2 className="text-lg font-semibold mb-4">Wybierz pakiet</h2>
 
-            {Object.entries(groupedPackages).map(([type, pkgs]) => (
-              <div key={type} className="mb-4">
-                <h3 className="text-sm font-medium text-muted mb-2">{TYPE_LABELS[type] || type}</h3>
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {pkgs.map(pkg => (
-                    <button
+          {Object.entries(groupedPackages).map(([type, pkgs]) => (
+            <div key={type} className="mb-6">
+              <h3 className="text-sm font-medium text-muted mb-2">{TYPE_LABELS[type] || type}</h3>
+              <div className="space-y-3">
+                {pkgs.map(pkg => {
+                  const isSelected = selectedPkg?.id === pkg.id
+                  return (
+                    <div
                       key={pkg.id}
-                      onClick={() => { setSelectedPkg(pkg); setSelectedSlot(null) }}
-                      className={`text-left p-4 rounded-xl border transition-colors ${
-                        selectedPkg?.id === pkg.id
-                          ? 'bg-primary/10 border-primary'
+                      className={`rounded-xl border transition-all ${
+                        isSelected
+                          ? 'bg-primary/5 border-primary'
                           : 'bg-card border-border hover:border-primary/40'
                       }`}
                     >
-                      <div className="flex items-start justify-between mb-2">
-                        <div>
-                          <h4 className="font-semibold text-sm">{pkg.name}</h4>
-                          <p className="text-xs text-muted">{pkg.weapon?.name} · {pkg.weapon?.caliber}</p>
+                      {/* Nagłówek pakietu — klikalne */}
+                      <button
+                        onClick={() => { setSelectedPkg(isSelected ? null : pkg); setSelectedSlot(null) }}
+                        className="w-full text-left p-4"
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div>
+                            <h4 className="font-semibold">{pkg.name}</h4>
+                            <p className="text-xs text-muted">{pkg.weapon?.name} · {pkg.weapon?.caliber}</p>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-lg font-bold text-primary">{Number(pkg.price_pln).toFixed(0)} zł</span>
+                            <ChevronDown className={`w-5 h-5 text-muted transition-transform ${isSelected ? 'rotate-180' : ''}`} />
+                          </div>
                         </div>
-                        <Crosshair className={`w-5 h-5 ${selectedPkg?.id === pkg.id ? 'text-primary' : 'text-muted/30'}`} />
-                      </div>
-                      <div className="flex items-center gap-3 text-xs text-muted">
-                        <span className="flex items-center gap-1">
-                          <Target className="w-3 h-3" />
-                          {pkg.ammo_count} szt.
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          {pkg.duration_minutes} min
-                        </span>
-                      </div>
-                      {pkg.description && <p className="text-xs text-muted mt-2">{pkg.description}</p>}
-                      <div className="mt-3 text-lg font-bold text-primary">{Number(pkg.price_pln).toFixed(0)} zł</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+                        <div className="flex items-center gap-4 text-xs text-muted">
+                          <span className="flex items-center gap-1">
+                            <Target className="w-3 h-3" />
+                            {pkg.ammo_count} szt. amunicji
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {pkg.duration_minutes} min
+                          </span>
+                        </div>
+                        {pkg.description && <p className="text-xs text-muted mt-2">{pkg.description}</p>}
+                      </button>
 
-          {/* Krok 2: Wybór daty i godziny */}
-          {selectedPkg && (
-            <div className="mb-8">
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <span className="w-7 h-7 bg-primary text-background rounded-full flex items-center justify-center text-sm font-bold">2</span>
-                Wybierz termin
-              </h2>
+                      {/* Rozwinięcie: terminy + rezerwacja */}
+                      {isSelected && (
+                        <div className="px-4 pb-4 border-t border-border/50 pt-4 space-y-4">
+                          {/* Wybór daty */}
+                          <div>
+                            <p className="text-sm font-medium mb-2">Wybierz termin</p>
+                            <div className="flex items-center gap-2 mb-3">
+                              <button
+                                onClick={() => setSelectedDate(formatDate(addDays(dateObj, -1)))}
+                                className="p-1.5 rounded-lg border border-border hover:bg-background"
+                              >
+                                <ChevronLeft className="w-4 h-4" />
+                              </button>
+                              <input
+                                type="date"
+                                value={selectedDate}
+                                min={formatDate(addDays(new Date(), 1))}
+                                onChange={e => { setSelectedDate(e.target.value); setSelectedSlot(null) }}
+                                className="px-3 py-1.5 bg-background border border-border rounded-lg text-sm font-medium"
+                              />
+                              <button
+                                onClick={() => setSelectedDate(formatDate(addDays(dateObj, 1)))}
+                                className="p-1.5 rounded-lg border border-border hover:bg-background"
+                              >
+                                <ChevronRight className="w-4 h-4" />
+                              </button>
+                              <span className="text-xs text-muted ml-1">
+                                {dateObj.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })}
+                              </span>
+                            </div>
 
-              {/* Data */}
-              <div className="flex items-center gap-2 mb-4">
-                <button
-                  onClick={() => setSelectedDate(formatDate(addDays(dateObj, -1)))}
-                  className="p-2 rounded-lg border border-border hover:bg-card"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
-                <input
-                  type="date"
-                  value={selectedDate}
-                  min={formatDate(addDays(new Date(), 1))}
-                  onChange={e => { setSelectedDate(e.target.value); setSelectedSlot(null) }}
-                  className="px-4 py-2 bg-card border border-border rounded-lg text-sm font-medium"
-                />
-                <button
-                  onClick={() => setSelectedDate(formatDate(addDays(dateObj, 1)))}
-                  className="p-2 rounded-lg border border-border hover:bg-card"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-                <span className="text-sm text-muted ml-2">
-                  {dateObj.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })}
-                </span>
-              </div>
+                            {/* Godziny */}
+                            {loadingSlots ? (
+                              <div className="flex items-center gap-2 py-6 justify-center text-muted text-sm">
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Sprawdzam dostępność...
+                              </div>
+                            ) : isPast ? (
+                              <p className="text-muted text-sm py-3">Wybierz przyszłą datę.</p>
+                            ) : availableSlots.length === 0 ? (
+                              <p className="text-muted text-sm py-3">Brak dostępnych terminów. Spróbuj inną datę.</p>
+                            ) : (
+                              <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-1.5">
+                                {availableSlots.map(slot => (
+                                  <button
+                                    key={slot.time}
+                                    onClick={() => setSelectedSlot(slot)}
+                                    className={`py-2 px-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                                      selectedSlot?.time === slot.time
+                                        ? 'bg-primary text-background border-primary'
+                                        : 'bg-background border-border hover:border-primary/40'
+                                    }`}
+                                  >
+                                    {slot.time}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
 
-              {/* Godziny */}
-              {loadingSlots ? (
-                <div className="flex items-center gap-2 py-8 justify-center text-muted">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Sprawdzam dostępność...
-                </div>
-              ) : isPast ? (
-                <p className="text-muted text-sm py-4">Wybierz przyszłą datę.</p>
-              ) : availableSlots.length === 0 ? (
-                <p className="text-muted text-sm py-4">Brak dostępnych terminów na wybrany dzień. Spróbuj inną datę.</p>
-              ) : (
-                <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
-                  {availableSlots.map(slot => (
-                    <button
-                      key={slot.time}
-                      onClick={() => setSelectedSlot(slot)}
-                      className={`py-3 px-2 rounded-lg text-sm font-medium border transition-colors ${
-                        selectedSlot?.time === slot.time
-                          ? 'bg-primary text-background border-primary'
-                          : 'bg-card border-border hover:border-primary/40'
-                      }`}
-                    >
-                      {slot.time}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+                          {/* Podsumowanie i rezerwacja — po wyborze godziny */}
+                          {selectedSlot && (
+                            <div className="border-t border-border/50 pt-4 space-y-4">
+                              {/* Podsumowanie */}
+                              <div className="bg-background rounded-lg p-4">
+                                <p className="text-sm font-medium mb-2">Podsumowanie</p>
+                                <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                                  <div className="flex justify-between">
+                                    <span className="text-muted">Broń:</span>
+                                    <span className="font-medium">{pkg.weapon?.name}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-muted">Data:</span>
+                                    <span className="font-medium">{dateObj.toLocaleDateString('pl-PL', { day: 'numeric', month: 'long' })}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-muted">Amunicja:</span>
+                                    <span className="font-medium">{pkg.ammo_count} szt.</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-muted">Godzina:</span>
+                                    <span className="font-medium">
+                                      {selectedSlot.time} – {(() => {
+                                        const endMin = timeToMin(selectedSlot.time) + pkg.duration_minutes
+                                        return `${Math.floor(endMin / 60).toString().padStart(2, '0')}:${(endMin % 60).toString().padStart(2, '0')}`
+                                      })()}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-muted">Instruktor:</span>
+                                    <span className="font-medium">{selectedSlot.instructorName}</span>
+                                  </div>
+                                </div>
+                              </div>
 
-          {/* Krok 3: Dane i podsumowanie */}
-          {selectedPkg && selectedSlot && (
-            <div className="mb-8">
-              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <span className="w-7 h-7 bg-primary text-background rounded-full flex items-center justify-center text-sm font-bold">3</span>
-                Podsumowanie i rezerwacja
-              </h2>
+                              {/* Dane klienta (gość) */}
+                              {!member && (
+                                <div>
+                                  <p className="text-sm font-medium mb-2 flex items-center gap-2">
+                                    <User className="w-4 h-4" />
+                                    Twoje dane (wymagane do wejścia)
+                                  </p>
+                                  <div className="space-y-2">
+                                    <div className="grid sm:grid-cols-2 gap-2">
+                                      <input type="text" placeholder="Imię i nazwisko *" value={guestForm.name} onChange={e => setGuestForm(f => ({ ...f, name: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                                      <input type="tel" placeholder="Telefon *" value={guestForm.phone} onChange={e => setGuestForm(f => ({ ...f, phone: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                                    </div>
+                                    <input type="text" placeholder="Adres zamieszkania *" value={guestForm.address} onChange={e => setGuestForm(f => ({ ...f, address: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                                    <div className="grid sm:grid-cols-2 gap-2">
+                                      <input type="text" placeholder="Nr dowodu / paszportu *" value={guestForm.document} onChange={e => setGuestForm(f => ({ ...f, document: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                                      <input type="email" placeholder="Email" value={guestForm.email} onChange={e => setGuestForm(f => ({ ...f, email: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
 
-              <div className="bg-card border border-border rounded-xl p-6">
-                {/* Podsumowanie */}
-                <div className="grid sm:grid-cols-2 gap-4 mb-6">
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted">Pakiet:</span>
-                      <span className="font-medium">{selectedPkg.name}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted">Broń:</span>
-                      <span className="font-medium">{selectedPkg.weapon?.name}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted">Kaliber:</span>
-                      <span className="font-medium">{selectedPkg.weapon?.caliber}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted">Amunicja:</span>
-                      <span className="font-medium">{selectedPkg.ammo_count} szt.</span>
-                    </div>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted">Data:</span>
-                      <span className="font-medium">{dateObj.toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted">Godzina:</span>
-                      <span className="font-medium">
-                        {selectedSlot.time} – {(() => {
-                          const endMin = timeToMin(selectedSlot.time) + selectedPkg.duration_minutes
-                          return `${Math.floor(endMin / 60).toString().padStart(2, '0')}:${(endMin % 60).toString().padStart(2, '0')}`
-                        })()}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted">Czas trwania:</span>
-                      <span className="font-medium">{selectedPkg.duration_minutes} min</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted">Instruktor:</span>
-                      <span className="font-medium">{selectedSlot.instructorName}</span>
-                    </div>
-                  </div>
-                </div>
+                              {/* Uwagi */}
+                              <input
+                                type="text"
+                                placeholder="Uwagi (opcjonalnie)"
+                                value={notes}
+                                onChange={e => setNotes(e.target.value)}
+                                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                              />
 
-                {/* Dane klienta (wymagane do książki wejścia na strzelnicę) */}
-                {!member && (
-                  <div className="border-t border-border pt-4 mb-4">
-                    <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
-                      <User className="w-4 h-4" />
-                      Twoje dane (wymagane do wejścia na strzelnicę)
-                    </h4>
-                    <div className="space-y-3">
-                      <div className="grid sm:grid-cols-2 gap-3">
-                        <input
-                          type="text"
-                          placeholder="Imię i nazwisko *"
-                          value={guestForm.name}
-                          onChange={e => setGuestForm(f => ({ ...f, name: e.target.value }))}
-                          required
-                          className="px-3 py-2 bg-background border border-border rounded-lg text-sm"
-                        />
-                        <input
-                          type="tel"
-                          placeholder="Telefon *"
-                          value={guestForm.phone}
-                          onChange={e => setGuestForm(f => ({ ...f, phone: e.target.value }))}
-                          required
-                          className="px-3 py-2 bg-background border border-border rounded-lg text-sm"
-                        />
-                      </div>
-                      <input
-                        type="text"
-                        placeholder="Adres zamieszkania *"
-                        value={guestForm.address}
-                        onChange={e => setGuestForm(f => ({ ...f, address: e.target.value }))}
-                        required
-                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
-                      />
-                      <div className="grid sm:grid-cols-2 gap-3">
-                        <input
-                          type="text"
-                          placeholder="Nr i seria dowodu / nr paszportu *"
-                          value={guestForm.document}
-                          onChange={e => setGuestForm(f => ({ ...f, document: e.target.value }))}
-                          required
-                          className="px-3 py-2 bg-background border border-border rounded-lg text-sm"
-                        />
-                        <input
-                          type="email"
-                          placeholder="Email (na regulamin strzelnicy)"
-                          value={guestForm.email}
-                          onChange={e => setGuestForm(f => ({ ...f, email: e.target.value }))}
-                          className="px-3 py-2 bg-background border border-border rounded-lg text-sm"
-                        />
-                      </div>
+                              {/* Cena i przycisk */}
+                              <div className="flex items-center justify-between pt-3 border-t border-border/50">
+                                <div className="text-2xl font-bold text-primary">{Number(pkg.price_pln).toFixed(0)} zł</div>
+                                <button
+                                  onClick={handleBook}
+                                  disabled={bookingLoading}
+                                  className="flex items-center gap-2 px-6 py-2.5 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50"
+                                >
+                                  {bookingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+                                  Rezerwuj i zapłać
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <p className="text-[10px] text-muted mt-2">
-                      * Na podany email wyślemy regulamin strzelnicy i zasady bezpieczeństwa.
-                    </p>
-                  </div>
-                )}
-
-                {/* Uwagi */}
-                <input
-                  type="text"
-                  placeholder="Uwagi (opcjonalnie)"
-                  value={notes}
-                  onChange={e => setNotes(e.target.value)}
-                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm mb-4"
-                />
-
-                {/* Cena i przycisk */}
-                <div className="flex items-center justify-between pt-4 border-t border-border">
-                  <div className="text-2xl font-bold text-primary">{Number(selectedPkg.price_pln).toFixed(0)} zł</div>
-                  <button
-                    onClick={handleBook}
-                    disabled={bookingLoading}
-                    className="flex items-center gap-2 px-8 py-3 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50"
-                  >
-                    {bookingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
-                    Rezerwuj i zapłać
-                  </button>
-                </div>
+                  )
+                })}
               </div>
             </div>
-          )}
+          ))}
         </>
       )}
 
