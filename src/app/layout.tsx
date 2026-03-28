@@ -38,7 +38,7 @@ export default function RootLayout({
               <p>&copy; {new Date().getFullYear()} Klub Strzelecki. Wszelkie prawa zastrzeżone.</p>
               <p className="text-xs">
                 Stworzone przez{' '}
-                <a href="/clueit" className="hover:text-foreground transition-colors font-medium">Clue IT</a>
+                <a href="https://weclue.it" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors font-medium">Clue IT</a>
               </p>
             </div>
           </footer>

@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
       '---',
       `**Zgłoszono przez:** ${email || 'Anonim'}`,
       `**Data:** ${new Date().toLocaleDateString('pl-PL')}`,
-      `**Źródło:** Formularz na stronie /clueit`,
+      `**Źródło:** Formularz na stronie weclue.it`,
     ].join('\n')
 
     const ghToken = process.env.GITHUB_TOKEN

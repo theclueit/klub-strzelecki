@@ -132,10 +132,10 @@ export default function ClueItPage() {
         <h2 className="text-xl font-bold mb-2">Zainteresowany współpracą?</h2>
         <p className="text-muted mb-4">Skontaktuj się z nami — chętnie porozmawiamy o Twoim projekcie.</p>
         <a
-          href="mailto:kontakt@clueit.pl"
+          href="mailto:kontakt@weclue.it"
           className="inline-block px-6 py-3 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors"
         >
-          kontakt@clueit.pl
+          kontakt@weclue.it
         </a>
       </div>
 
