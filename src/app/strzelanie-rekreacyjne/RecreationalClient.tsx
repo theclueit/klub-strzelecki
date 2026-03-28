@@ -313,10 +313,12 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
 
   const addToCart = () => {
     if (!selectedPkg || !selectedSlot) return
-    setCart(prev => [...prev, { pkg: selectedPkg, date: selectedDate, slot: selectedSlot }])
+    const newItem = { pkg: selectedPkg, date: selectedDate, slot: selectedSlot }
+    setCart(prev => [...prev, newItem])
     setSelectedSlot(null)
     setSelectedPkg(null)
-    // Pokaż prompt dla kolejnego pakietu
+    // Ustaw datę z dodanego produktu na potrzeby kolejnego wyboru
+    setSelectedDate(selectedDate)
     setSameDayPrompt(true)
   }
 
@@ -325,15 +327,28 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
     if (cart.length <= 1) setShowCart(false)
   }
 
-  const handleSelectPkgWithSameDay = (pkg: Package, sameDay: boolean) => {
-    setSameDayPrompt(false)
-    setSelectedPkg(pkg)
-    setSelectedSlot(null)
-    if (sameDay && cart.length > 0) {
-      const lastItem = cart[cart.length - 1]
-      setSelectedDate(lastItem.date)
+  // Oblicz koniec ostatniego elementu w koszyku na daną datę
+  const lastCartEndMin = useMemo(() => {
+    if (cart.length === 0) return null
+    const sameDateItems = cart.filter(c => c.date === selectedDate)
+    if (sameDateItems.length === 0) return null
+    let maxEnd = 0
+    for (const item of sameDateItems) {
+      const end = timeToMin(item.slot.time) + item.pkg.duration_minutes
+      if (end > maxEnd) maxEnd = end
     }
-  }
+    return maxEnd
+  }, [cart, selectedDate])
+
+  // Znajdź najbliższy slot po koszyku i oblicz przerwę
+  const suggestedSlotInfo = useMemo(() => {
+    if (!lastCartEndMin || availableSlots.length === 0) return null
+    // Znajdź najbliższy slot zaczynający się po (lub w momencie) końca ostatniego w koszyku
+    const nextSlot = availableSlots.find(s => timeToMin(s.time) >= lastCartEndMin)
+    if (!nextSlot) return null
+    const gapMin = timeToMin(nextSlot.time) - lastCartEndMin
+    return { slot: nextSlot, gapMin }
+  }, [lastCartEndMin, availableSlots])
 
   const cartTotal = cart.reduce((sum, item) => sum + Number(item.pkg.price_pln), 0)
 
@@ -505,6 +520,14 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
                               </span>
                             </div>
 
+                            {/* Info o przerwie */}
+                            {suggestedSlotInfo && suggestedSlotInfo.gapMin > 0 && !loadingSlots && availableSlots.length > 0 && (
+                              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-3 py-2 text-sm text-yellow-400 mb-2">
+                                <Clock className="w-4 h-4 inline mr-1.5" />
+                                Najbliższy wolny termin o <span className="font-semibold">{suggestedSlotInfo.slot.time}</span> — przerwa {suggestedSlotInfo.gapMin} min od poprzedniego pakietu
+                              </div>
+                            )}
+
                             {/* Godziny */}
                             {loadingSlots ? (
                               <div className="flex items-center gap-2 py-6 justify-center text-muted text-sm">
@@ -517,19 +540,28 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
                               <p className="text-muted text-sm py-3">Brak dostępnych terminów. Spróbuj inną datę.</p>
                             ) : (
                               <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-1.5">
-                                {availableSlots.map(slot => (
-                                  <button
-                                    key={slot.time}
-                                    onClick={() => setSelectedSlot(slot)}
-                                    className={`py-2 px-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                                      selectedSlot?.time === slot.time
-                                        ? 'bg-primary text-background border-primary'
-                                        : 'bg-background border-border hover:border-primary/40'
-                                    }`}
-                                  >
-                                    {slot.time}
-                                  </button>
-                                ))}
+                                {availableSlots.map(slot => {
+                                  const isSuggested = suggestedSlotInfo?.slot.time === slot.time && !selectedSlot
+                                  const isBeforeCart = lastCartEndMin && timeToMin(slot.time) < lastCartEndMin
+                                  return (
+                                    <button
+                                      key={slot.time}
+                                      onClick={() => setSelectedSlot(slot)}
+                                      disabled={!!isBeforeCart}
+                                      className={`py-2 px-1.5 rounded-lg text-sm font-medium border transition-colors ${
+                                        selectedSlot?.time === slot.time
+                                          ? 'bg-primary text-background border-primary'
+                                          : isSuggested
+                                            ? 'bg-primary/20 border-primary/60 text-primary ring-1 ring-primary/40'
+                                            : isBeforeCart
+                                              ? 'bg-background/50 border-border/30 text-muted/40 cursor-not-allowed'
+                                              : 'bg-background border-border hover:border-primary/40'
+                                      }`}
+                                    >
+                                      {slot.time}
+                                    </button>
+                                  )
+                                })}
                               </div>
                             )}
                           </div>
