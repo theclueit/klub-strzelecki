@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
-import { UserPlus, Users, Zap, Search, Check, ClipboardList, DoorOpen, Target, Clock, Loader2, Printer } from 'lucide-react'
+import { UserPlus, Users, Zap, Search, Check, ClipboardList, DoorOpen, Target, Clock, Loader2, Printer, DollarSign, ChevronDown, ChevronUp } from 'lucide-react'
 import type { Member, Discipline, EventDiscipline, EventDisciplineSlot } from '@/types/database'
 
 interface EventRow {
@@ -56,6 +56,29 @@ export default function RegistrarPage() {
   const [rangeEntries, setRangeEntries] = useState<RangeEntry[]>([])
   const [rangeLoading, setRangeLoading] = useState(false)
 
+  // Event registrations list (for payment tracking)
+  interface EventRegEntry {
+    id: string
+    event_id: string
+    member_id: string | null
+    paid: boolean
+    status: string
+    member: { full_name: string } | null
+    disciplines: { event_discipline_id: string; event_discipline: { price_pln: number; discipline: { name: string } } }[]
+  }
+  interface GuestRegEntry {
+    id: string
+    event_id: string
+    full_name: string
+    paid: boolean
+    status: string
+    disciplines: { event_discipline_id: string; event_discipline: { price_pln: number; discipline: { name: string } } }[]
+  }
+  const [eventRegs, setEventRegs] = useState<EventRegEntry[]>([])
+  const [guestRegs, setGuestRegs] = useState<GuestRegEntry[]>([])
+  const [regsLoading, setRegsLoading] = useState(false)
+  const [showRegsList, setShowRegsList] = useState(true)
+
   const loadRangeEntries = useCallback(async () => {
     setRangeLoading(true)
     const today = new Date().toISOString().slice(0, 10)
@@ -69,9 +92,70 @@ export default function RegistrarPage() {
     setRangeLoading(false)
   }, [supabase])
 
+  async function toggleRangePaid(id: string, paid: boolean) {
+    await supabase.from('lane_reservations').update({ paid }).eq('id', id)
+    loadRangeEntries()
+  }
+
+  const loadEventRegs = useCallback(async () => {
+    if (!selectedEventId) return
+    setRegsLoading(true)
+    const [memberRegs, guestR] = await Promise.all([
+      supabase
+        .from('event_registrations')
+        .select('id, event_id, member_id, paid, status, member:members!event_registrations_member_id_fkey(full_name)')
+        .eq('event_id', selectedEventId)
+        .neq('status', 'cancelled'),
+      supabase
+        .from('guest_registrations')
+        .select('id, event_id, full_name, paid, status')
+        .eq('event_id', selectedEventId)
+        .neq('status', 'cancelled'),
+    ])
+    // Load disciplines for member registrations
+    const memberData = (memberRegs.data ?? []) as any[]
+    const guestData = (guestR.data ?? []) as any[]
+
+    // Load registration_disciplines for all
+    const memberIds = memberData.map((r: any) => r.id)
+    const guestIds = guestData.map((r: any) => r.id)
+
+    const [memberDiscs, guestDiscs] = await Promise.all([
+      memberIds.length > 0
+        ? supabase.from('registration_disciplines').select('member_registration_id, event_discipline_id, event_discipline:event_disciplines(price_pln, discipline:disciplines(name))').in('member_registration_id', memberIds)
+        : { data: [] },
+      guestIds.length > 0
+        ? supabase.from('registration_disciplines').select('guest_registration_id, event_discipline_id, event_discipline:event_disciplines(price_pln, discipline:disciplines(name))').in('guest_registration_id', guestIds)
+        : { data: [] },
+    ])
+
+    const mDiscs = (memberDiscs.data ?? []) as any[]
+    const gDiscs = (guestDiscs.data ?? []) as any[]
+
+    setEventRegs(memberData.map((r: any) => ({
+      ...r,
+      disciplines: mDiscs.filter((d: any) => d.member_registration_id === r.id),
+    })))
+    setGuestRegs(guestData.map((r: any) => ({
+      ...r,
+      disciplines: gDiscs.filter((d: any) => d.guest_registration_id === r.id),
+    })))
+    setRegsLoading(false)
+  }, [supabase, selectedEventId])
+
+  async function toggleEventRegPaid(id: string, paid: boolean, isGuest: boolean) {
+    const table = isGuest ? 'guest_registrations' : 'event_registrations'
+    await supabase.from(table).update({ paid }).eq('id', id)
+    loadEventRegs()
+  }
+
   useEffect(() => {
     if (tab === 'range' && member) loadRangeEntries()
   }, [tab, member])
+
+  useEffect(() => {
+    if (tab === 'events' && selectedEventId) loadEventRegs()
+  }, [selectedEventId, tab])
 
   const loadData = useCallback(async () => {
     const now = new Date()
@@ -330,10 +414,16 @@ export default function RegistrarPage() {
                         {entry.start_time?.slice(0, 5)} – {entry.end_time?.slice(0, 5)}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        {entry.paid
-                          ? <span className="text-green-500 text-xs font-semibold">✓ Tak</span>
-                          : <span className="text-red-400 text-xs font-semibold">✗ Nie</span>
-                        }
+                        <button
+                          onClick={() => toggleRangePaid(entry.id, !entry.paid)}
+                          className={`text-xs px-3 py-1 rounded-full font-semibold transition-colors ${
+                            entry.paid
+                              ? 'bg-green-500/15 text-green-500 hover:bg-green-500/25'
+                              : 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
+                          }`}
+                        >
+                          {entry.paid ? '✓ Opłacone' : '✗ Nieopłacone'}
+                        </button>
                       </td>
                       <td className="px-4 py-3 text-center">
                         <span className={`text-xs px-2 py-0.5 rounded-full ${
@@ -550,6 +640,112 @@ export default function RegistrarPage() {
               )}
             </div>
           </div>
+
+          {/* === Registered participants with payment status === */}
+          {selectedEventId && (
+            <div className="mt-6">
+              <button
+                onClick={() => setShowRegsList(!showRegsList)}
+                className="flex items-center gap-2 text-sm font-semibold text-muted hover:text-foreground transition-colors mb-3"
+              >
+                <DollarSign className="w-4 h-4" />
+                Zgłoszenia i płatności
+                {showRegsList ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                <span className="text-xs bg-card border border-border rounded-full px-2 py-0.5">
+                  {eventRegs.length + guestRegs.length}
+                </span>
+              </button>
+
+              {showRegsList && (
+                regsLoading ? (
+                  <div className="flex items-center gap-2 py-6 justify-center text-muted">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Ładowanie...
+                  </div>
+                ) : (eventRegs.length + guestRegs.length) === 0 ? (
+                  <div className="bg-card border border-border rounded-xl p-6 text-center text-muted text-sm">
+                    Brak zgłoszeń na to wydarzenie.
+                  </div>
+                ) : (
+                  <div className="bg-card border border-border rounded-xl overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border text-xs text-muted">
+                          <th className="text-left px-4 py-3">Typ</th>
+                          <th className="text-left px-4 py-3">Osoba</th>
+                          <th className="text-left px-4 py-3">Dyscypliny</th>
+                          <th className="text-right px-4 py-3">Kwota</th>
+                          <th className="text-center px-4 py-3">Płatność</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {eventRegs.map(reg => {
+                          const discNames = reg.disciplines.map((d: any) => d.event_discipline?.discipline?.name).filter(Boolean)
+                          const total = reg.disciplines.reduce((sum: number, d: any) => sum + (d.event_discipline?.price_pln || 0), 0)
+                          return (
+                            <tr key={reg.id} className="border-b border-border/30 hover:bg-card-hover">
+                              <td className="px-4 py-3">
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary font-medium">Członek</span>
+                              </td>
+                              <td className="px-4 py-3 font-medium">{(reg.member as any)?.full_name ?? '—'}</td>
+                              <td className="px-4 py-3 text-muted text-xs">{discNames.join(', ') || '—'}</td>
+                              <td className="px-4 py-3 text-right text-muted">{total > 0 ? `${total.toFixed(0)} zł` : '—'}</td>
+                              <td className="px-4 py-3 text-center">
+                                {total > 0 ? (
+                                  <button
+                                    onClick={() => toggleEventRegPaid(reg.id, !reg.paid, false)}
+                                    className={`text-xs px-3 py-1 rounded-full font-semibold transition-colors ${
+                                      reg.paid
+                                        ? 'bg-green-500/15 text-green-500 hover:bg-green-500/25'
+                                        : 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
+                                    }`}
+                                  >
+                                    {reg.paid ? '✓ Opłacone' : '✗ Nieopłacone'}
+                                  </button>
+                                ) : (
+                                  <span className="text-xs text-muted">—</span>
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                        {guestRegs.map(reg => {
+                          const discNames = reg.disciplines.map((d: any) => d.event_discipline?.discipline?.name).filter(Boolean)
+                          const total = reg.disciplines.reduce((sum: number, d: any) => sum + (d.event_discipline?.price_pln || 0), 0)
+                          return (
+                            <tr key={reg.id} className="border-b border-border/30 hover:bg-card-hover">
+                              <td className="px-4 py-3">
+                                <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 font-medium">Gość</span>
+                              </td>
+                              <td className="px-4 py-3 font-medium">{reg.full_name}</td>
+                              <td className="px-4 py-3 text-muted text-xs">{discNames.join(', ') || '—'}</td>
+                              <td className="px-4 py-3 text-right text-muted">{total > 0 ? `${total.toFixed(0)} zł` : '—'}</td>
+                              <td className="px-4 py-3 text-center">
+                                {total > 0 ? (
+                                  <button
+                                    onClick={() => toggleEventRegPaid(reg.id, !reg.paid, true)}
+                                    className={`text-xs px-3 py-1 rounded-full font-semibold transition-colors ${
+                                      reg.paid
+                                        ? 'bg-green-500/15 text-green-500 hover:bg-green-500/25'
+                                        : 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
+                                    }`}
+                                  >
+                                    {reg.paid ? '✓ Opłacone' : '✗ Nieopłacone'}
+                                  </button>
+                                ) : (
+                                  <span className="text-xs text-muted">—</span>
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
