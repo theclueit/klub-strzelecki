@@ -396,7 +396,7 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
           {Object.entries(groupedPackages).map(([type, pkgs]) => (
             <div key={type} className="mb-6">
               <h3 className="text-sm font-medium text-muted mb-2">{TYPE_LABELS[type] || type}</h3>
-              <div className="space-y-3">
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
                 {pkgs.map(pkg => {
                   const isSelected = selectedPkg?.id === pkg.id
                   return (
@@ -404,7 +404,7 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
                       key={pkg.id}
                       className={`rounded-xl border transition-all ${
                         isSelected
-                          ? 'bg-primary/5 border-primary'
+                          ? 'bg-primary/5 border-primary sm:col-span-2 lg:col-span-3'
                           : 'bg-card border-border hover:border-primary/40'
                       }`}
                     >
@@ -415,18 +415,15 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
                       >
                         <div className="flex items-start justify-between mb-2">
                           <div>
-                            <h4 className="font-semibold">{pkg.name}</h4>
+                            <h4 className="font-semibold text-sm">{pkg.name}</h4>
                             <p className="text-xs text-muted">{pkg.weapon?.name} · {pkg.weapon?.caliber}</p>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-lg font-bold text-primary">{Number(pkg.price_pln).toFixed(0)} zł</span>
-                            <ChevronDown className={`w-5 h-5 text-muted transition-transform ${isSelected ? 'rotate-180' : ''}`} />
-                          </div>
+                          <Crosshair className={`w-5 h-5 shrink-0 ${isSelected ? 'text-primary' : 'text-muted/30'}`} />
                         </div>
-                        <div className="flex items-center gap-4 text-xs text-muted">
+                        <div className="flex items-center gap-3 text-xs text-muted">
                           <span className="flex items-center gap-1">
                             <Target className="w-3 h-3" />
-                            {pkg.ammo_count} szt. amunicji
+                            {pkg.ammo_count} szt.
                           </span>
                           <span className="flex items-center gap-1">
                             <Clock className="w-3 h-3" />
@@ -434,6 +431,7 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
                           </span>
                         </div>
                         {pkg.description && <p className="text-xs text-muted mt-2">{pkg.description}</p>}
+                        <div className="mt-3 text-lg font-bold text-primary">{Number(pkg.price_pln).toFixed(0)} zł</div>
                       </button>
 
                       {/* Rozwinięcie: terminy + rezerwacja */}
