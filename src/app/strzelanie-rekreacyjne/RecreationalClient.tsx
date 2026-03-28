@@ -644,7 +644,10 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
               </div>
               <div className="text-left">
                 <p className="text-sm font-semibold">{cart.length} {cart.length === 1 ? 'pakiet' : cart.length < 5 ? 'pakiety' : 'pakietów'}</p>
-                <p className="text-xs text-muted">{cart.map(c => c.pkg.name).join(', ')}</p>
+                <p className="text-xs text-muted">{cart.map(c => {
+                  const d = new Date(c.date + 'T00:00:00')
+                  return `${c.pkg.name} (${d.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' })} ${c.slot.time})`
+                }).join(', ')}</p>
               </div>
             </button>
             <div className="flex items-center gap-4">
