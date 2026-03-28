@@ -993,181 +993,145 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
       {/* Modal rezerwacji */}
       {showBooking && selectedLane && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowBooking(null)}>
-          <div className="bg-card border border-border rounded-xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold">Rezerwacja toru</h3>
-              <button onClick={() => setShowBooking(null)} className="p-1 rounded hover:bg-background">
+          <div className="bg-card border border-border rounded-xl max-w-lg w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            {/* Header — sticky */}
+            <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
+              <div>
+                <h3 className="text-base font-bold">Rezerwacja toru</h3>
+                <p className="text-xs text-muted">
+                  {selectedLane.name} ({selectedLane.length_m}m) · St. {showBooking.stationNumber}
+                  {bookingStations > 1 && `–${showBooking.stationNumber + bookingStations - 1}`}
+                  {' · '}{dateObj.toLocaleDateString('pl-PL', { weekday: 'short', day: 'numeric', month: 'short' })}
+                  {' · '}{showBooking.slotTime}–{(() => {
+                    const endMin = timeToMin(showBooking.slotTime) + bookingSlots * 30
+                    return `${Math.floor(endMin / 60).toString().padStart(2, '0')}:${(endMin % 60).toString().padStart(2, '0')}`
+                  })()}
+                </p>
+              </div>
+              <button onClick={() => setShowBooking(null)} className="p-1.5 rounded-lg hover:bg-background">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="space-y-3 mb-6 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted">Oś:</span>
-                <span className="font-medium">{selectedLane.name} ({selectedLane.length_m}m)</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted">Stanowisko:</span>
-                <span className="font-medium">Nr {showBooking.stationNumber}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted">Data:</span>
-                <span className="font-medium">{dateObj.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted">Od:</span>
-                <span className="font-medium">{showBooking.slotTime}</span>
-              </div>
-
-              {/* Liczba stanowisk */}
-              {selectedLane.stations_count > 1 && (
-                <div>
-                  <label className="block text-muted mb-1">Liczba stanowisk:</label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {Array.from({ length: Math.min(selectedLane.stations_count - showBooking.stationNumber + 1, 4) }, (_, i) => i + 1).map(n => {
-                      const available = areAdjacentStationsFree(showBooking.stationNumber, n, showBooking.slotTime, bookingSlots)
+            {/* Scrollable content */}
+            <div className="overflow-y-auto px-5 py-4 space-y-4 text-sm flex-1">
+              {/* Stanowiska + Czas w jednym rzędzie */}
+              <div className="grid grid-cols-2 gap-4">
+                {selectedLane.stations_count > 1 && (
+                  <div>
+                    <label className="block text-xs text-muted mb-1.5 font-medium">Stanowiska</label>
+                    <div className="flex flex-wrap gap-1">
+                      {Array.from({ length: Math.min(selectedLane.stations_count - showBooking.stationNumber + 1, 4) }, (_, i) => i + 1).map(n => {
+                        const available = areAdjacentStationsFree(showBooking.stationNumber, n, showBooking.slotTime, bookingSlots)
+                        return (
+                          <button
+                            key={n}
+                            disabled={!available}
+                            onClick={() => setBookingStations(n)}
+                            className={`px-2.5 py-1 rounded text-xs font-medium border transition-colors ${
+                              bookingStations === n
+                                ? 'bg-primary/10 border-primary text-primary'
+                                : available
+                                  ? 'border-border hover:border-primary/40'
+                                  : 'border-border/30 text-muted/30 cursor-not-allowed'
+                            }`}
+                          >
+                            {n}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+                <div className={selectedLane.stations_count <= 1 ? 'col-span-2' : ''}>
+                  <label className="block text-xs text-muted mb-1.5 font-medium">Czas trwania</label>
+                  <div className="flex flex-wrap gap-1">
+                    {[1, 2, 3, 4, 6, 8].map(s => {
+                      const mins = s * 30
+                      const label = mins >= 60
+                        ? `${Math.floor(mins / 60)}h${mins % 60 ? '30' : ''}`
+                        : `${mins}min`
+                      const available = areAdjacentStationsFree(showBooking.stationNumber, bookingStations, showBooking.slotTime, s)
                       return (
                         <button
-                          key={n}
+                          key={s}
                           disabled={!available}
-                          onClick={() => setBookingStations(n)}
-                          className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                            bookingStations === n
+                          onClick={() => setBookingSlots(s)}
+                          className={`px-2.5 py-1 rounded text-xs font-medium border transition-colors ${
+                            bookingSlots === s
                               ? 'bg-primary/10 border-primary text-primary'
                               : available
                                 ? 'border-border hover:border-primary/40'
                                 : 'border-border/30 text-muted/30 cursor-not-allowed'
                           }`}
                         >
-                          {n} {n === 1 ? 'stanowisko' : n < 5 ? 'stanowiska' : 'stanowisk'}
+                          {label}
                         </button>
                       )
                     })}
                   </div>
-                  {bookingStations > 1 && (
-                    <p className="text-xs text-muted mt-1">
-                      Stanowiska: {showBooking.stationNumber}–{showBooking.stationNumber + bookingStations - 1}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Czas trwania w slotach 30-min */}
-              <div>
-                <label className="block text-muted mb-1">Czas trwania:</label>
-                <div className="flex flex-wrap gap-1.5">
-                  {[1, 2, 3, 4, 6, 8].map(s => {
-                    const mins = s * 30
-                    const label = mins >= 60
-                      ? `${Math.floor(mins / 60)}h${mins % 60 ? '30' : ''}`
-                      : `${mins}min`
-                    const available = areAdjacentStationsFree(showBooking.stationNumber, bookingStations, showBooking.slotTime, s)
-                    return (
-                      <button
-                        key={s}
-                        disabled={!available}
-                        onClick={() => setBookingSlots(s)}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${
-                          bookingSlots === s
-                            ? 'bg-primary/10 border-primary text-primary'
-                            : available
-                              ? 'border-border hover:border-primary/40'
-                              : 'border-border/30 text-muted/30 cursor-not-allowed'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    )
-                  })}
                 </div>
               </div>
 
-              {/* Preview: do kiedy */}
-              <div className="flex justify-between text-muted">
-                <span>Do:</span>
-                <span className="font-medium text-foreground">
-                  {(() => {
-                    const endMin = timeToMin(showBooking.slotTime) + bookingSlots * 30
-                    const h = Math.floor(endMin / 60)
-                    const m = endMin % 60
-                    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
-                  })()}
-                </span>
-              </div>
-
-              {/* Formularz danych gościa (gdy niezalogowany) */}
+              {/* Dane gościa — kompaktowe (gdy niezalogowany) */}
               {!member && (
                 <div className="pt-3 border-t border-border">
-                  <p className="text-xs text-muted mb-2 font-medium">Dane do rezerwacji *</p>
-                  <div className="space-y-2">
-                    <div>
-                      <label className="text-xs text-muted block mb-1">Imię i nazwisko *</label>
-                      <input
-                        type="text"
-                        value={guestBooking.full_name}
-                        onChange={e => setGuestBooking(f => ({ ...f, full_name: e.target.value }))}
-                        placeholder="Jan Kowalski"
-                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-muted block mb-1">Email *</label>
-                      <input
-                        type="email"
-                        value={guestBooking.email}
-                        onChange={e => setGuestBooking(f => ({ ...f, email: e.target.value }))}
-                        placeholder="jan@example.com"
-                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
-                      />
-                      <p className="text-[10px] text-muted mt-0.5">Potwierdzenie rezerwacji zostanie wysłane na ten adres</p>
-                    </div>
-                    <div>
-                      <label className="text-xs text-muted block mb-1">Adres zamieszkania *</label>
-                      <input
-                        type="text"
-                        value={guestBooking.address}
-                        onChange={e => setGuestBooking(f => ({ ...f, address: e.target.value }))}
-                        placeholder="ul. Strzelecka 1, 00-001 Warszawa"
-                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-muted block mb-1">Nr i seria dowodu / paszportu *</label>
-                      <input
-                        type="text"
-                        value={guestBooking.document}
-                        onChange={e => setGuestBooking(f => ({ ...f, document: e.target.value }))}
-                        placeholder="ABC 123456"
-                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-muted block mb-1">Telefon</label>
-                      <input
-                        type="tel"
-                        value={guestBooking.phone}
-                        onChange={e => setGuestBooking(f => ({ ...f, phone: e.target.value }))}
-                        placeholder="+48..."
-                        className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
-                      />
-                    </div>
+                  <p className="text-xs text-muted mb-2 font-medium">Twoje dane *</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={guestBooking.full_name}
+                      onChange={e => setGuestBooking(f => ({ ...f, full_name: e.target.value }))}
+                      placeholder="Imię i nazwisko *"
+                      className="px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                    />
+                    <input
+                      type="email"
+                      value={guestBooking.email}
+                      onChange={e => setGuestBooking(f => ({ ...f, email: e.target.value }))}
+                      placeholder="Email *"
+                      className="px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                    />
+                    <input
+                      type="text"
+                      value={guestBooking.address}
+                      onChange={e => setGuestBooking(f => ({ ...f, address: e.target.value }))}
+                      placeholder="Adres zamieszkania *"
+                      className="col-span-2 px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                    />
+                    <input
+                      type="text"
+                      value={guestBooking.document}
+                      onChange={e => setGuestBooking(f => ({ ...f, document: e.target.value }))}
+                      placeholder="Nr dowodu / paszportu *"
+                      className="px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                    />
+                    <input
+                      type="tel"
+                      value={guestBooking.phone}
+                      onChange={e => setGuestBooking(f => ({ ...f, phone: e.target.value }))}
+                      placeholder="Telefon"
+                      className="px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                    />
                   </div>
+                  <p className="text-[10px] text-muted mt-1">Potwierdzenie rezerwacji zostanie wysłane na podany email</p>
                 </div>
               )}
 
-              <div>
-                <label className="block text-muted mb-1">Uwagi (opcjonalnie):</label>
-                <input
-                  type="text"
-                  value={bookingNotes}
-                  onChange={e => setBookingNotes(e.target.value)}
-                  placeholder="Np. strzelanie z karabinu .308"
-                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
-                />
-              </div>
+              {/* Uwagi */}
+              <input
+                type="text"
+                value={bookingNotes}
+                onChange={e => setBookingNotes(e.target.value)}
+                placeholder="Uwagi (opcjonalnie)"
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+              />
+            </div>
 
+            {/* Footer — sticky: cena + przyciski */}
+            <div className="px-5 py-3 border-t border-border shrink-0 space-y-2">
               {selectedLane.price_per_hour_pln > 0 && (
-                <div className="flex justify-between pt-2 border-t border-border font-semibold">
+                <div className="flex justify-between text-sm font-semibold mb-1">
                   <span>Do zapłaty:</span>
                   <span className="text-primary">
                     {(selectedLane.price_per_hour_pln * (bookingSlots * 30) / 60 * bookingStations).toFixed(2)} zł
@@ -1175,44 +1139,39 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
                   </span>
                 </div>
               )}
-            </div>
-
-            {(() => {
-              const guestInvalid = !member && (!guestBooking.full_name || !guestBooking.email || !guestBooking.address || !guestBooking.document)
-              return (
-                <div className="space-y-2">
-                  {selectedLane.price_per_hour_pln > 0 ? (
-                    <>
-                      <button
-                        onClick={() => handleBook(true)}
-                        disabled={bookingLoading || guestInvalid}
-                        className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50"
-                      >
-                        {bookingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
-                        Rezerwuj i zapłać online
-                      </button>
-                      <button
-                        onClick={() => handleBook(false)}
-                        disabled={bookingLoading || guestInvalid}
-                        className="flex items-center justify-center gap-2 w-full px-4 py-2.5 border border-border text-sm font-medium rounded-lg hover:bg-background transition-colors disabled:opacity-50"
-                      >
-                        <Clock className="w-4 h-4" />
-                        Rezerwuj — zapłacę na miejscu
-                      </button>
-                    </>
-                  ) : (
+              {(() => {
+                const guestInvalid = !member && (!guestBooking.full_name || !guestBooking.email || !guestBooking.address || !guestBooking.document)
+                return selectedLane.price_per_hour_pln > 0 ? (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleBook(true)}
+                      disabled={bookingLoading || guestInvalid}
+                      className="flex items-center justify-center gap-2 flex-1 px-4 py-2.5 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50 text-sm"
+                    >
+                      {bookingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+                      Zapłać online
+                    </button>
                     <button
                       onClick={() => handleBook(false)}
                       disabled={bookingLoading || guestInvalid}
-                      className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50"
+                      className="flex items-center justify-center gap-2 flex-1 px-4 py-2.5 border border-border font-medium rounded-lg hover:bg-background transition-colors disabled:opacity-50 text-sm"
                     >
-                      {bookingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                      Zarezerwuj
+                      <Clock className="w-4 h-4" />
+                      Na miejscu
                     </button>
-                  )}
-                </div>
-              )
-            })()}
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleBook(false)}
+                    disabled={bookingLoading || guestInvalid}
+                    className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50 text-sm"
+                  >
+                    {bookingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                    Zarezerwuj
+                  </button>
+                )
+              })()}
+            </div>
           </div>
         </div>
       )}
