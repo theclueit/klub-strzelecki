@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
-import { Target, Clock, CreditCard, CheckCircle, X, Loader2, ChevronLeft, ChevronRight, ChevronDown, User, Crosshair, Package } from 'lucide-react'
+import { Target, Clock, CreditCard, CheckCircle, X, Loader2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, User, Crosshair, Package, ShoppingCart, Trash2, Plus } from 'lucide-react'
 import Link from 'next/link'
 
 interface Weapon {
@@ -67,6 +67,12 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
   const { member } = useAuth()
   const supabase = createSupabaseBrowser()
 
+  interface CartItem {
+    pkg: Package
+    date: string
+    slot: TimeSlot
+  }
+
   const [selectedPkg, setSelectedPkg] = useState<Package | null>(null)
   const [selectedDate, setSelectedDate] = useState(() => formatDate(addDays(new Date(), 1)))
   const [availableSlots, setAvailableSlots] = useState<TimeSlot[]>([])
@@ -76,6 +82,9 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
   const [guestForm, setGuestForm] = useState({ name: '', email: '', phone: '', address: '', document: '' })
   const [notes, setNotes] = useState('')
   const [bookingSuccess, setBookingSuccess] = useState(false)
+  const [cart, setCart] = useState<CartItem[]>([])
+  const [showCart, setShowCart] = useState(false)
+  const [sameDayPrompt, setSameDayPrompt] = useState(false)
 
   // On-site booking (registrar only)
   const isRangeStaff = member && ['admin', 'registrar', 'range_registrar'].includes(member.role)
@@ -302,8 +311,35 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
     }
   }
 
-  const handleBook = async () => {
+  const addToCart = () => {
     if (!selectedPkg || !selectedSlot) return
+    setCart(prev => [...prev, { pkg: selectedPkg, date: selectedDate, slot: selectedSlot }])
+    setSelectedSlot(null)
+    setSelectedPkg(null)
+    // Pokaż prompt dla kolejnego pakietu
+    setSameDayPrompt(true)
+  }
+
+  const removeFromCart = (index: number) => {
+    setCart(prev => prev.filter((_, i) => i !== index))
+    if (cart.length <= 1) setShowCart(false)
+  }
+
+  const handleSelectPkgWithSameDay = (pkg: Package, sameDay: boolean) => {
+    setSameDayPrompt(false)
+    setSelectedPkg(pkg)
+    setSelectedSlot(null)
+    if (sameDay && cart.length > 0) {
+      const lastItem = cart[cart.length - 1]
+      setSelectedDate(lastItem.date)
+    }
+  }
+
+  const cartTotal = cart.reduce((sum, item) => sum + Number(item.pkg.price_pln), 0)
+
+  const handleBook = async () => {
+    const itemsToBook = cart.length > 0 ? cart : (selectedPkg && selectedSlot ? [{ pkg: selectedPkg, date: selectedDate, slot: selectedSlot }] : [])
+    if (itemsToBook.length === 0) return
     if (!member && (!guestForm.name || !guestForm.phone || !guestForm.address || !guestForm.document)) {
       alert('Podaj imię i nazwisko, adres zamieszkania, numer dokumentu i telefon')
       return
@@ -314,10 +350,12 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          package_id: selectedPkg.id,
-          date: selectedDate,
-          start_time: selectedSlot.time,
-          instructor_id: selectedSlot.instructorId,
+          items: itemsToBook.map(item => ({
+            package_id: item.pkg.id,
+            date: item.date,
+            start_time: item.slot.time,
+            instructor_id: item.slot.instructorId,
+          })),
           member_id: member?.id || null,
           guest_name: member ? null : guestForm.name,
           guest_email: member ? null : guestForm.email,
@@ -335,6 +373,8 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
       if (data.success) {
         setBookingSuccess(true)
         setSelectedSlot(null)
+        setCart([])
+        setShowCart(false)
       } else {
         alert(data.error || 'Błąd rezerwacji')
       }
@@ -529,47 +569,18 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
                                 </div>
                               </div>
 
-                              {/* Dane klienta (gość) */}
-                              {!member && (
-                                <div>
-                                  <p className="text-sm font-medium mb-2 flex items-center gap-2">
-                                    <User className="w-4 h-4" />
-                                    Twoje dane (wymagane do wejścia)
-                                  </p>
-                                  <div className="space-y-2">
-                                    <div className="grid sm:grid-cols-2 gap-2">
-                                      <input type="text" placeholder="Imię i nazwisko *" value={guestForm.name} onChange={e => setGuestForm(f => ({ ...f, name: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
-                                      <input type="tel" placeholder="Telefon *" value={guestForm.phone} onChange={e => setGuestForm(f => ({ ...f, phone: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
-                                    </div>
-                                    <input type="text" placeholder="Adres zamieszkania *" value={guestForm.address} onChange={e => setGuestForm(f => ({ ...f, address: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
-                                    <div className="grid sm:grid-cols-2 gap-2">
-                                      <input type="text" placeholder="Nr dowodu / paszportu *" value={guestForm.document} onChange={e => setGuestForm(f => ({ ...f, document: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
-                                      <input type="email" placeholder="Email" value={guestForm.email} onChange={e => setGuestForm(f => ({ ...f, email: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Uwagi */}
-                              <input
-                                type="text"
-                                placeholder="Uwagi (opcjonalnie)"
-                                value={notes}
-                                onChange={e => setNotes(e.target.value)}
-                                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
-                              />
-
                               {/* Cena i przycisk */}
                               <div className="flex items-center justify-between pt-3 border-t border-border/50">
                                 <div className="text-2xl font-bold text-primary">{Number(pkg.price_pln).toFixed(0)} zł</div>
-                                <button
-                                  onClick={handleBook}
-                                  disabled={bookingLoading}
-                                  className="flex items-center gap-2 px-6 py-2.5 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50"
-                                >
-                                  {bookingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
-                                  Rezerwuj i zapłać
-                                </button>
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={addToCart}
+                                    className="flex items-center gap-2 px-5 py-2.5 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors"
+                                  >
+                                    <ShoppingCart className="w-4 h-4" />
+                                    Dodaj do koszyka
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           )}
@@ -584,7 +595,170 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
         </>
       )}
 
-      <div className="mt-8 text-center">
+      {/* Prompt: na ten sam dzień? */}
+      {sameDayPrompt && cart.length > 0 && !selectedPkg && (
+        <div className="bg-card border border-primary/30 rounded-xl p-5 mb-6">
+          <p className="font-semibold mb-3">Dodać kolejny pakiet?</p>
+          <p className="text-sm text-muted mb-4">
+            Masz już {cart.length} {cart.length === 1 ? 'pakiet' : cart.length < 5 ? 'pakiety' : 'pakietów'} w koszyku
+            ({cart[cart.length - 1].date === selectedDate ? dateObj.toLocaleDateString('pl-PL', { day: 'numeric', month: 'long' }) : ''}).
+            Chcesz dopasować kolejny na ten sam dzień?
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setSameDayPrompt(false)}
+              className="flex items-center gap-2 px-4 py-2 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark text-sm"
+            >
+              <Plus className="w-4 h-4" />
+              Tak, na ten sam dzień
+            </button>
+            <button
+              onClick={() => { setSameDayPrompt(false); setSelectedDate(formatDate(addDays(new Date(), 1))) }}
+              className="px-4 py-2 border border-border rounded-lg text-sm font-medium hover:bg-background"
+            >
+              Inny dzień
+            </button>
+            <button
+              onClick={() => { setSameDayPrompt(false); setShowCart(true) }}
+              className="px-4 py-2 border border-border rounded-lg text-sm font-medium hover:bg-background"
+            >
+              Przejdź do koszyka
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Koszyk sticky bar */}
+      {cart.length > 0 && !showCart && (
+        <div className="fixed bottom-0 left-0 right-0 bg-card border-t border-border z-40 px-4 py-3">
+          <div className="max-w-4xl mx-auto flex items-center justify-between">
+            <button
+              onClick={() => setShowCart(!showCart)}
+              className="flex items-center gap-3"
+            >
+              <div className="relative">
+                <ShoppingCart className="w-6 h-6 text-primary" />
+                <span className="absolute -top-2 -right-2 w-5 h-5 bg-primary text-background text-xs font-bold rounded-full flex items-center justify-center">
+                  {cart.length}
+                </span>
+              </div>
+              <div className="text-left">
+                <p className="text-sm font-semibold">{cart.length} {cart.length === 1 ? 'pakiet' : cart.length < 5 ? 'pakiety' : 'pakietów'}</p>
+                <p className="text-xs text-muted">{cart.map(c => c.pkg.name).join(', ')}</p>
+              </div>
+            </button>
+            <div className="flex items-center gap-4">
+              <span className="text-xl font-bold text-primary">{cartTotal.toFixed(0)} zł</span>
+              <button
+                onClick={() => setShowCart(true)}
+                className="flex items-center gap-2 px-5 py-2.5 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors"
+              >
+                <CreditCard className="w-4 h-4" />
+                Rezerwuj
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Panel koszyka */}
+      {showCart && cart.length > 0 && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center">
+          <div className="bg-card border border-border rounded-t-2xl sm:rounded-xl w-full sm:max-w-lg max-h-[85vh] overflow-y-auto p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <ShoppingCart className="w-5 h-5 text-primary" />
+                Koszyk ({cart.length})
+              </h2>
+              <button onClick={() => setShowCart(false)} className="p-1 text-muted hover:text-foreground">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Pozycje */}
+            <div className="space-y-2 mb-4">
+              {cart.map((item, idx) => {
+                const endMin = timeToMin(item.slot.time) + item.pkg.duration_minutes
+                const endTime = `${Math.floor(endMin / 60).toString().padStart(2, '0')}:${(endMin % 60).toString().padStart(2, '0')}`
+                const itemDate = new Date(item.date + 'T00:00:00')
+                return (
+                  <div key={idx} className="bg-background border border-border rounded-lg p-3 flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-sm">{item.pkg.name}</p>
+                      <p className="text-xs text-muted">
+                        {itemDate.toLocaleDateString('pl-PL', { day: 'numeric', month: 'long' })} · {item.slot.time}–{endTime} · {item.slot.instructorName}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-bold text-primary text-sm">{Number(item.pkg.price_pln).toFixed(0)} zł</span>
+                      <button onClick={() => removeFromCart(idx)} className="p-1 text-red-500 hover:bg-red-500/10 rounded">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Dodaj kolejny */}
+            <button
+              onClick={() => { setShowCart(false); setSameDayPrompt(false) }}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-dashed border-border rounded-lg text-sm text-muted hover:text-foreground hover:border-primary/40 mb-4"
+            >
+              <Plus className="w-4 h-4" />
+              Dodaj kolejny pakiet
+            </button>
+
+            {/* Dane klienta (gość) */}
+            {!member && (
+              <div className="border-t border-border pt-4 mb-4">
+                <p className="text-sm font-medium mb-2 flex items-center gap-2">
+                  <User className="w-4 h-4" />
+                  Twoje dane (wymagane do wejścia)
+                </p>
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="text" placeholder="Imię i nazwisko *" value={guestForm.name} onChange={e => setGuestForm(f => ({ ...f, name: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    <input type="tel" placeholder="Telefon *" value={guestForm.phone} onChange={e => setGuestForm(f => ({ ...f, phone: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                  <input type="text" placeholder="Adres zamieszkania *" value={guestForm.address} onChange={e => setGuestForm(f => ({ ...f, address: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="text" placeholder="Nr dowodu / paszportu *" value={guestForm.document} onChange={e => setGuestForm(f => ({ ...f, document: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    <input type="email" placeholder="Email" value={guestForm.email} onChange={e => setGuestForm(f => ({ ...f, email: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Uwagi */}
+            <input
+              type="text"
+              placeholder="Uwagi (opcjonalnie)"
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm mb-4"
+            />
+
+            {/* Suma i przycisk */}
+            <div className="flex items-center justify-between pt-4 border-t border-border">
+              <div>
+                <p className="text-xs text-muted">Do zapłaty</p>
+                <p className="text-2xl font-bold text-primary">{cartTotal.toFixed(0)} zł</p>
+              </div>
+              <button
+                onClick={handleBook}
+                disabled={bookingLoading}
+                className="flex items-center gap-2 px-6 py-3 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50"
+              >
+                {bookingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+                Rezerwuj i zapłać
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className={`mt-8 text-center ${cart.length > 0 ? 'pb-20' : ''}`}>
         <Link href="/" className="text-sm text-muted hover:text-foreground transition-colors">
           &larr; Wróć na stronę główną
         </Link>
