@@ -343,12 +343,18 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
   // Znajdź najbliższy slot po koszyku i oblicz przerwę
   const suggestedSlotInfo = useMemo(() => {
     if (!lastCartEndMin || availableSlots.length === 0) return null
-    // Znajdź najbliższy slot zaczynający się po (lub w momencie) końca ostatniego w koszyku
     const nextSlot = availableSlots.find(s => timeToMin(s.time) >= lastCartEndMin)
     if (!nextSlot) return null
     const gapMin = timeToMin(nextSlot.time) - lastCartEndMin
     return { slot: nextSlot, gapMin }
   }, [lastCartEndMin, availableSlots])
+
+  // Auto-select najbliższego slotu po załadowaniu (gdy koszyk nie jest pusty)
+  useEffect(() => {
+    if (suggestedSlotInfo && cart.length > 0 && selectedPkg && !selectedSlot) {
+      setSelectedSlot(suggestedSlotInfo.slot)
+    }
+  }, [suggestedSlotInfo, cart.length, selectedPkg])
 
   const cartTotal = cart.reduce((sum, item) => sum + Number(item.pkg.price_pln), 0)
 
