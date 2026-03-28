@@ -292,44 +292,57 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
       slotIdx >= dragSelection.minSlot && slotIdx <= dragSelection.maxSlot
   }
 
+  // Track if mouse actually moved during drag (to distinguish click from drag on desktop)
+  const didDrag = useRef(false)
+
   // Desktop: drag-to-select (mousedown → mousemove → mouseup)
   const handleDragStart = (sn: number, slotIdx: number) => {
     if (isPast) return
     isDragging.current = true
+    didDrag.current = false
     setDragStart({ sn, slotIdx })
     setDragEnd({ sn, slotIdx })
   }
 
   const handleDragMove = (sn: number, slotIdx: number) => {
     if (!isDragging.current) return
+    didDrag.current = true
     setDragEnd({ sn, slotIdx })
   }
 
   const handleDragEnd = () => {
     if (!isDragging.current || !dragStart || !dragEnd) {
       isDragging.current = false
-      setDragStart(null)
-      setDragEnd(null)
       return
     }
     isDragging.current = false
 
-    openBookingFromSelection(dragStart, dragEnd)
-    setDragStart(null)
-    setDragEnd(null)
+    // Only open booking if user actually dragged (moved to different cell)
+    if (didDrag.current && (dragStart.sn !== dragEnd.sn || dragStart.slotIdx !== dragEnd.slotIdx)) {
+      openBookingFromSelection(dragStart, dragEnd)
+      setDragStart(null)
+      setDragEnd(null)
+    }
+    // If didn't drag — leave selection, let onClick handle it as tap
   }
 
-  // Mobile: tap-to-select (1st tap = start, 2nd tap = end, tap same = single slot)
-  const handleTap = (sn: number, slotIdx: number) => {
+  // Click handler: tap-to-select (works on both mobile and desktop)
+  // 1st click = start, 2nd click = end → open booking
+  const handleSlotClick = (sn: number, slotIdx: number) => {
     if (isPast) return
+    // If drag just completed (moved cells), skip — already handled in handleDragEnd
+    if (didDrag.current && dragStart === null) {
+      didDrag.current = false
+      return
+    }
+
     if (!dragStart) {
-      // First tap — mark start
+      // First click — mark start
       setDragStart({ sn, slotIdx })
       setDragEnd({ sn, slotIdx })
     } else {
-      // Second tap — mark end and open booking
+      // Second click — mark end and open booking
       const end = { sn, slotIdx }
-      setDragEnd(end)
       openBookingFromSelection(dragStart, end)
       setDragStart(null)
       setDragEnd(null)
@@ -363,10 +376,7 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
     }
   }
 
-  // Detect touch device
-  const isTouchDevice = typeof window !== 'undefined' && 'ontouchstart' in window
-
-  // Global mouseup listener to end drag (desktop only)
+  // Global mouseup listener to end drag
   useEffect(() => {
     const onUp = () => {
       if (isDragging.current) handleDragEnd()
@@ -878,8 +888,8 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
                 </div>
               </div>
 
-              {/* Mobile: tap selection hint */}
-              {isTouchDevice && dragStart && !showBooking && (
+              {/* Tap selection hint */}
+              {dragStart && !showBooking && (
                 <div className="flex items-center justify-between bg-primary/10 border border-primary/30 rounded-lg px-4 py-2 mb-2 text-sm">
                   <span className="text-primary font-medium">
                     Zaznaczono start: St. {dragStart.sn}, {slots[dragStart.slotIdx]} — kliknij slot końcowy
@@ -997,7 +1007,7 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
                                 onMouseDown={e => { e.preventDefault(); canBook && handleDragStart(sn, slotIdx) }}
                                 onMouseEnter={() => canBook && handleDragMove(sn, slotIdx)}
                                 onMouseUp={() => canBook && handleDragEnd()}
-                                onClick={() => canBook && isTouchDevice && handleTap(sn, slotIdx)}
+                                onClick={() => canBook && handleSlotClick(sn, slotIdx)}
                                 title={tooClose ? `Rezerwacja online min. ${selectedLane?.min_advance_minutes ?? 60} min wcześniej` : undefined}
                               >
                                 <div
