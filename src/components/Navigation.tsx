@@ -118,7 +118,7 @@ export default function Navigation() {
     ...(member?.role === 'instructor' || member?.role === 'admin'
       ? [{ href: '/instruktor', label: 'Instruktor', icon: Target }]
       : []),
-    ...(member?.role === 'registrar' || member?.role === 'admin'
+    ...(['registrar', 'range_registrar', 'admin'].includes(member?.role || '')
       ? [{ href: '/rejestracja', label: 'Rejestracja', icon: UserPlus }]
       : []),
     ...(member?.role === 'admin'

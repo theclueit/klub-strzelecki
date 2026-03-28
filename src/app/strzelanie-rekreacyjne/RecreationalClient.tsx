@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
-import { Target, Clock, CreditCard, CheckCircle, X, Loader2, ChevronLeft, ChevronRight, User, Crosshair } from 'lucide-react'
+import { Target, Clock, CreditCard, CheckCircle, X, Loader2, ChevronLeft, ChevronRight, User, Crosshair, Package } from 'lucide-react'
 import Link from 'next/link'
 
 interface Weapon {
@@ -76,6 +76,22 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
   const [guestForm, setGuestForm] = useState({ name: '', email: '', phone: '', address: '', document: '' })
   const [notes, setNotes] = useState('')
   const [bookingSuccess, setBookingSuccess] = useState(false)
+
+  // On-site booking (registrar only)
+  const isRangeStaff = member && ['admin', 'registrar', 'range_registrar'].includes(member.role)
+  const [showOnsite, setShowOnsite] = useState(false)
+  const [onsiteWeapons, setOnsiteWeapons] = useState<{ id: string; name: string; type: string; caliber: string }[]>([])
+  const [onsiteInstructors, setOnsiteInstructors] = useState<{ id: string; full_name: string }[]>([])
+  const [onsiteLoading, setOnsiteLoading] = useState(false)
+  const [onsiteSaving, setOnsiteSaving] = useState(false)
+  const [onsiteSuccess, setOnsiteSuccess] = useState('')
+  const [onsiteForm, setOnsiteForm] = useState({
+    package_id: '', weapon_id: '', instructor_id: '',
+    start_time: '10:00', duration_minutes: '60',
+    ammo_count: '50', price_pln: '0',
+    guest_name: '', guest_phone: '', guest_address: '', guest_document: '', guest_email: '',
+    targets: '', notes: '',
+  })
 
   const dateObj = useMemo(() => new Date(selectedDate + 'T00:00:00'), [selectedDate])
   const isPast = dateObj <= new Date(new Date().toDateString())
@@ -202,6 +218,90 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
 
   useEffect(() => { loadAvailableSlots() }, [loadAvailableSlots])
 
+  // On-site: open modal, load data
+  const openOnsiteBooking = async () => {
+    setOnsiteLoading(true)
+    setOnsiteSuccess('')
+    setOnsiteForm({
+      package_id: '', weapon_id: '', instructor_id: '',
+      start_time: '10:00', duration_minutes: '60',
+      ammo_count: '50', price_pln: '0',
+      guest_name: '', guest_phone: '', guest_address: '', guest_document: '', guest_email: '',
+      targets: '', notes: '',
+    })
+    setShowOnsite(true)
+    const [weaponsRes, instructorsRes] = await Promise.all([
+      supabase.from('range_weapons').select('id, name, type, caliber').eq('status', 'in_stock').order('type').order('name'),
+      supabase.from('members').select('id, full_name').in('role', ['instructor', 'admin']).eq('is_active', true).order('full_name'),
+    ])
+    setOnsiteWeapons(weaponsRes.data ?? [])
+    setOnsiteInstructors(instructorsRes.data ?? [])
+    setOnsiteLoading(false)
+  }
+
+  const handlePackageSelect = (pkgId: string) => {
+    const pkg = packages.find(p => p.id === pkgId)
+    if (pkg) {
+      setOnsiteForm(f => ({
+        ...f,
+        package_id: pkgId,
+        weapon_id: pkg.weapon_id,
+        ammo_count: String(pkg.ammo_count),
+        duration_minutes: String(pkg.duration_minutes),
+        price_pln: String(pkg.price_pln),
+      }))
+    } else {
+      setOnsiteForm(f => ({ ...f, package_id: '' }))
+    }
+  }
+
+  const handleOnsiteSubmit = async () => {
+    if (!member) return
+    if (!onsiteForm.weapon_id || !onsiteForm.instructor_id) {
+      alert('Wybierz broń i instruktora')
+      return
+    }
+    if (!onsiteForm.guest_name || !onsiteForm.guest_address || !onsiteForm.guest_document || !onsiteForm.guest_email) {
+      alert('Podaj imię i nazwisko, adres, numer dokumentu oraz email klienta')
+      return
+    }
+    setOnsiteSaving(true)
+    try {
+      const today = formatDate(new Date())
+      const res = await fetch('/api/recreational/onsite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          weapon_id: onsiteForm.weapon_id,
+          instructor_id: onsiteForm.instructor_id,
+          date: today,
+          start_time: onsiteForm.start_time,
+          duration_minutes: parseInt(onsiteForm.duration_minutes),
+          ammo_count: parseInt(onsiteForm.ammo_count),
+          price_pln: parseFloat(onsiteForm.price_pln),
+          guest_name: onsiteForm.guest_name,
+          guest_phone: onsiteForm.guest_phone,
+          guest_address: onsiteForm.guest_address,
+          guest_document: onsiteForm.guest_document,
+          guest_email: onsiteForm.guest_email,
+          notes: [onsiteForm.targets ? `Tarcze: ${onsiteForm.targets}` : '', onsiteForm.notes].filter(Boolean).join(' | '),
+          registrar_id: member.id,
+          package_id: onsiteForm.package_id || null,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        alert('Błąd: ' + (data.error || 'Nieznany błąd'))
+        return
+      }
+      setOnsiteSuccess(`Zarezerwowano: ${onsiteForm.guest_name}, ${data.weapon_name || 'broń'}, ${onsiteForm.ammo_count} szt. amunicji, ${onsiteForm.price_pln} zł`)
+    } catch (err: any) {
+      alert('Błąd: ' + (err.message || 'Spróbuj ponownie'))
+    } finally {
+      setOnsiteSaving(false)
+    }
+  }
+
   const handleBook = async () => {
     if (!selectedPkg || !selectedSlot) return
     if (!member && (!guestForm.name || !guestForm.phone || !guestForm.address || !guestForm.document)) {
@@ -267,9 +367,20 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Strzelanie rekreacyjne</h1>
-        <p className="text-muted">Wybierz pakiet, datę i godzinę. Instruktor przygotuje broń i amunicję — Ty strzelasz!</p>
+      <div className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold mb-2">Strzelanie rekreacyjne</h1>
+          <p className="text-muted">Wybierz pakiet, datę i godzinę. Instruktor przygotuje broń i amunicję — Ty strzelasz!</p>
+        </div>
+        {isRangeStaff && (
+          <button
+            onClick={openOnsiteBooking}
+            className="flex items-center gap-2 px-4 py-2.5 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors whitespace-nowrap"
+          >
+            <Package className="w-4 h-4" />
+            Zestaw na miejscu
+          </button>
+        )}
       </div>
 
       {packages.length === 0 ? (
@@ -535,6 +646,158 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
           &larr; Wróć na stronę główną
         </Link>
       </div>
+
+      {/* Modal zestawu strzeleckiego na miejscu (rejestrator) */}
+      {showOnsite && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <Package className="w-5 h-5 text-primary" />
+                Zestaw strzelecki na miejscu
+              </h2>
+              <button onClick={() => setShowOnsite(false)} className="p-1 text-muted hover:text-foreground">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {onsiteSuccess ? (
+              <div className="text-center py-6">
+                <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
+                <p className="font-semibold mb-2">Rezerwacja utworzona!</p>
+                <p className="text-sm text-muted mb-4">{onsiteSuccess}</p>
+                <div className="flex gap-2 justify-center">
+                  <button
+                    onClick={() => { setOnsiteSuccess(''); setOnsiteForm(f => ({ ...f, guest_name: '', guest_phone: '', guest_address: '', guest_document: '', guest_email: '', targets: '', notes: '' })) }}
+                    className="px-4 py-2 bg-primary text-background text-sm font-semibold rounded-lg hover:bg-primary-dark"
+                  >
+                    Następny klient
+                  </button>
+                  <button onClick={() => setShowOnsite(false)} className="px-4 py-2 border border-border text-sm rounded-lg hover:bg-background">
+                    Zamknij
+                  </button>
+                </div>
+              </div>
+            ) : onsiteLoading ? (
+              <div className="flex items-center gap-2 justify-center py-12 text-muted">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Ładowanie...
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Pakiet */}
+                <div>
+                  <label className="text-xs text-muted block mb-1">Pakiet (opcjonalnie)</label>
+                  <select
+                    value={onsiteForm.package_id}
+                    onChange={e => handlePackageSelect(e.target.value)}
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                  >
+                    <option value="">— własny zestaw —</option>
+                    {packages.map(p => (
+                      <option key={p.id} value={p.id}>{p.name} ({p.price_pln} zł)</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Broń */}
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Broń *</label>
+                    <select
+                      value={onsiteForm.weapon_id}
+                      onChange={e => setOnsiteForm(f => ({ ...f, weapon_id: e.target.value }))}
+                      className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                    >
+                      <option value="">Wybierz...</option>
+                      {onsiteWeapons.map(w => (
+                        <option key={w.id} value={w.id}>{w.name} ({w.caliber})</option>
+                      ))}
+                    </select>
+                  </div>
+                  {/* Instruktor */}
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Instruktor *</label>
+                    <select
+                      value={onsiteForm.instructor_id}
+                      onChange={e => setOnsiteForm(f => ({ ...f, instructor_id: e.target.value }))}
+                      className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                    >
+                      <option value="">Wybierz...</option>
+                      {onsiteInstructors.map(i => (
+                        <option key={i.id} value={i.id}>{i.full_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Godzina</label>
+                    <input type="time" value={onsiteForm.start_time} onChange={e => setOnsiteForm(f => ({ ...f, start_time: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Czas (min)</label>
+                    <input type="number" value={onsiteForm.duration_minutes} onChange={e => setOnsiteForm(f => ({ ...f, duration_minutes: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Cena (zł)</label>
+                    <input type="number" step="0.01" value={onsiteForm.price_pln} onChange={e => setOnsiteForm(f => ({ ...f, price_pln: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Ilość amunicji</label>
+                    <input type="number" value={onsiteForm.ammo_count} onChange={e => setOnsiteForm(f => ({ ...f, ammo_count: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted block mb-1">Tarcze</label>
+                    <input type="text" value={onsiteForm.targets} onChange={e => setOnsiteForm(f => ({ ...f, targets: e.target.value }))} placeholder="np. 3x tarcza TS-2" className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                  </div>
+                </div>
+
+                {/* Dane klienta */}
+                <div className="pt-3 border-t border-border">
+                  <p className="text-xs text-muted mb-2 font-medium">Dane klienta (do książki wejścia) *</p>
+                  <div className="space-y-2">
+                    <input type="text" value={onsiteForm.guest_name} onChange={e => setOnsiteForm(f => ({ ...f, guest_name: e.target.value }))} placeholder="Imię i nazwisko *" className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    <input type="email" value={onsiteForm.guest_email} onChange={e => setOnsiteForm(f => ({ ...f, guest_email: e.target.value }))} placeholder="Email * (regulamin strzelnicy)" className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    <input type="text" value={onsiteForm.guest_address} onChange={e => setOnsiteForm(f => ({ ...f, guest_address: e.target.value }))} placeholder="Adres zamieszkania *" className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="text" value={onsiteForm.guest_document} onChange={e => setOnsiteForm(f => ({ ...f, guest_document: e.target.value }))} placeholder="Nr dowodu / paszportu *" className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                      <input type="tel" value={onsiteForm.guest_phone} onChange={e => setOnsiteForm(f => ({ ...f, guest_phone: e.target.value }))} placeholder="Telefon" className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                    </div>
+                  </div>
+                </div>
+
+                <textarea value={onsiteForm.notes} onChange={e => setOnsiteForm(f => ({ ...f, notes: e.target.value }))} placeholder="Uwagi..." rows={2} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm resize-none" />
+
+                {/* Podsumowanie */}
+                {onsiteForm.weapon_id && (
+                  <div className="bg-background rounded-lg p-3 text-sm space-y-1 border border-border">
+                    <p className="font-semibold">Podsumowanie:</p>
+                    <p>Broń: <span className="text-primary">{onsiteWeapons.find(w => w.id === onsiteForm.weapon_id)?.name}</span></p>
+                    <p>Amunicja: {onsiteForm.ammo_count} szt. · Czas: {onsiteForm.start_time} · {onsiteForm.duration_minutes} min</p>
+                    <p className="font-semibold text-lg pt-1 border-t border-border mt-1">
+                      Do zapłaty: <span className="text-primary">{Number(onsiteForm.price_pln).toFixed(2)} zł</span>
+                    </p>
+                  </div>
+                )}
+
+                <button
+                  onClick={handleOnsiteSubmit}
+                  disabled={onsiteSaving || !onsiteForm.weapon_id || !onsiteForm.instructor_id || !onsiteForm.guest_name || !onsiteForm.guest_address || !onsiteForm.guest_document || !onsiteForm.guest_email}
+                  className="flex items-center justify-center gap-2 w-full px-4 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                >
+                  {onsiteSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                  Zarejestruj i oznacz jako opłacone (gotówka)
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
