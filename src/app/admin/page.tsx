@@ -3670,6 +3670,74 @@ export default function AdminPage() {
                     </div>
                   </div>
                 )}
+
+                {/* Lista zarejestrowanych na bieżące zawody */}
+                {onsiteEventId && (() => {
+                  const evMRegs = memberRegs.filter(r => r.event_id === onsiteEventId && r.status !== 'cancelled')
+                  const evGRegs = guestRegs.filter(r => r.event_id === onsiteEventId && r.status !== 'cancelled')
+                  const allRegs = [
+                    ...evMRegs.map(r => ({ id: r.id, name: (r.member as any)?.full_name ?? '?', type: 'member' as const, paid: (r as any).paid, startNumber: r.start_number, memberId: (r.member as any)?.id })),
+                    ...evGRegs.map(r => ({ id: r.id, name: r.full_name, type: 'guest' as const, paid: false, startNumber: null, memberId: '' })),
+                  ]
+                  if (allRegs.length === 0) return null
+                  return (
+                    <div className="mt-4 border-t border-border pt-3">
+                      <p className="text-xs font-semibold text-muted mb-2">Zarejestrowani ({allRegs.length}):</p>
+                      <div className="space-y-1 max-h-48 overflow-y-auto">
+                        {allRegs.map(reg => {
+                          const discIds = reg.type === 'member'
+                            ? regDisciplines.filter(rd => rd.member_registration_id === reg.id).map(rd => rd.event_discipline_id)
+                            : regDisciplines.filter(rd => rd.guest_registration_id === reg.id).map(rd => rd.event_discipline_id)
+                          const discNames = discIds.map(did => {
+                            const ed = eventDisciplines.find(e => e.id === did)
+                            return ed ? (disciplines.find(d => d.id === ed.discipline_id)?.name ?? '') : ''
+                          }).filter(Boolean)
+
+                          return (
+                            <div key={reg.id} className="flex items-center justify-between text-xs px-2 py-1.5 rounded hover:bg-card-hover">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium ${reg.type === 'member' ? 'bg-primary/20 text-primary' : 'bg-blue-500/20 text-blue-400'}`}>
+                                  {reg.startNumber ?? (reg.type === 'member' ? 'CZŁ' : 'G')}
+                                </span>
+                                <span className="font-medium truncate">{reg.name}</span>
+                                <span className="text-muted truncate">{discNames.join(', ')}</span>
+                                {reg.paid && <span className="shrink-0 text-[10px] px-1 py-0.5 rounded bg-success/20 text-success">PLN</span>}
+                              </div>
+                              <button
+                                onClick={() => {
+                                  const evDiscs = getEventDiscs(onsiteEventId)
+                                  const applicableDiscs = discIds.length > 0 ? evDiscs.filter(ed => discIds.includes(ed.id)) : evDiscs
+                                  const competitionDiscs = applicableDiscs.filter(ed => {
+                                    const disc = disciplines.find(d => d.id === ed.discipline_id)
+                                    return disc && disc.category === 'discipline'
+                                  })
+                                  if (competitionDiscs.length === 0) return
+                                  const firstDisc = disciplines.find(d => d.id === competitionDiscs[0].discipline_id)
+                                  const sn = reg.startNumber ? String(reg.startNumber).padStart(4, '0') : '0000'
+                                  const regData = {
+                                    memberId: reg.memberId ?? '',
+                                    memberName: reg.name,
+                                    eventId: onsiteEventId,
+                                    eventTitle: events.find(e => e.id === onsiteEventId)?.title ?? '',
+                                    discName: firstDisc?.name ?? '',
+                                    discScoringType: firstDisc?.scoring_type ?? 'points',
+                                    discShotsCount: firstDisc?.shots_count ?? 10,
+                                    regId: reg.id,
+                                  }
+                                  competitionDiscs.length === 1 ? printSingleMetryczka(regData, sn) : printAllMetryczki(regData)
+                                }}
+                                className="shrink-0 p-1 text-muted hover:text-primary rounded hover:bg-card-hover"
+                                title="Drukuj metryczki"
+                              >
+                                <Printer className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })()}
               </div>
             )
           })()}
@@ -3804,7 +3872,7 @@ export default function AdminPage() {
                               }`}>{r.status === 'pending' ? 'oczekuje' : r.status === 'confirmed' ? 'potwierdzony' : 'anulowany'}</span>
                             </td>
                             <td className="px-4 py-2 text-right">
-                              <div className="flex items-center justify-end gap-1">
+                              <div className="flex items-center justify-end gap-1 flex-wrap">
                                 {r.status === 'pending' && (
                                   <>
                                     <button
@@ -3829,6 +3897,38 @@ export default function AdminPage() {
                                     Cofnij
                                   </button>
                                 )}
+                                <button
+                                  onClick={() => {
+                                    const discIds = regDisciplines.filter(rd => rd.guest_registration_id === r.id).map(rd => rd.event_discipline_id)
+                                    const evDiscs = getEventDiscs(ev.id)
+                                    const applicableDiscs = discIds.length > 0 ? evDiscs.filter(ed => discIds.includes(ed.id)) : evDiscs
+                                    const competitionDiscs = applicableDiscs.filter(ed => {
+                                      const disc = disciplines.find(d => d.id === ed.discipline_id)
+                                      return disc && disc.category === 'discipline'
+                                    })
+                                    if (competitionDiscs.length === 0) return alert('Brak dyscyplin do wydruku')
+                                    const firstDisc = disciplines.find(d => d.id === competitionDiscs[0].discipline_id)
+                                    const regData = {
+                                      memberId: '',
+                                      memberName: r.full_name,
+                                      eventId: ev.id,
+                                      eventTitle: ev.title,
+                                      discName: firstDisc?.name ?? '',
+                                      discScoringType: firstDisc?.scoring_type ?? 'points',
+                                      discShotsCount: firstDisc?.shots_count ?? 10,
+                                      regId: r.id,
+                                    }
+                                    if (competitionDiscs.length === 1) {
+                                      printSingleMetryczka(regData, '0000')
+                                    } else {
+                                      printAllMetryczki(regData)
+                                    }
+                                  }}
+                                  className="p-1.5 text-muted hover:text-primary rounded hover:bg-card-hover"
+                                  title="Drukuj metryczki"
+                                >
+                                  <Printer className="w-3.5 h-3.5" />
+                                </button>
                               </div>
                             </td>
                           </tr>
