@@ -9,7 +9,7 @@ export interface Member {
   avatar_url: string | null
   qr_code: string | null
   is_active: boolean
-  role: 'member' | 'judge' | 'admin' | 'registrar' | 'range_registrar' | 'instructor' | 'recreational_client'
+  role: 'member' | 'judge' | 'admin' | 'superadmin' | 'registrar' | 'range_registrar' | 'instructor' | 'recreational_client'
   created_at: string
   judge_class: string | null
   judge_license_number: string | null

@@ -243,7 +243,7 @@ export default function ProfilePage() {
   const inputClass = "w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
 
   const badges: { label: string; color: string }[] = []
-  if (member.role === 'judge' || member.role === 'admin') {
+  if (member.role === 'judge' || member.role === 'admin' || member.role === 'superadmin') {
     badges.push({ label: member.judge_class ? `Sedzia ${member.judge_class}` : 'Sedzia', color: 'bg-primary/20 text-primary' })
   }
   if (member.is_range_officer) badges.push({ label: 'Prowadzacy strzelanie', color: 'bg-blue-500/20 text-blue-400' })
@@ -385,7 +385,7 @@ export default function ProfilePage() {
                   <p className="text-xs text-muted">Nr licencji zawodniczej</p>
                   <p className="text-sm font-medium">{member.license_number || <span className="text-muted italic">nie podano</span>}</p>
                 </div>
-                {(member.role === 'judge' || member.role === 'admin') && (
+                {(member.role === 'judge' || member.role === 'admin' || member.role === 'superadmin') && (
                   <div>
                     <p className="text-xs text-muted">Nr licencji sedziowskiej</p>
                     <p className="text-sm font-medium">{member.judge_license_number || <span className="text-muted italic">nie podano</span>}</p>
@@ -399,7 +399,7 @@ export default function ProfilePage() {
                   <p className="text-xs text-muted">Nr patentu strzeleckiego</p>
                   <p className="text-sm font-medium">{member.shooting_patent_number || <span className="text-muted italic">nie podano</span>}</p>
                 </div>
-                {(member.role === 'judge' || member.role === 'admin') && member.judge_class && (
+                {(member.role === 'judge' || member.role === 'admin' || member.role === 'superadmin') && member.judge_class && (
                   <div>
                     <p className="text-xs text-muted">Klasa sedziowska</p>
                     <p className="text-sm font-medium">{member.judge_class}</p>
@@ -537,7 +537,7 @@ export default function ProfilePage() {
                     <label className="text-xs text-muted block mb-1">Nr licencji zawodniczej</label>
                     <input type="text" value={form.license_number} onChange={e => setForm(f => ({ ...f, license_number: e.target.value }))} placeholder="PL-2024-XXX" className={inputClass} />
                   </div>
-                  {(member.role === 'judge' || member.role === 'admin') && (
+                  {(member.role === 'judge' || member.role === 'admin' || member.role === 'superadmin') && (
                     <div>
                       <label className="text-xs text-muted block mb-1">Nr licencji sedziowskiej</label>
                       <input type="text" value={form.judge_license_number} onChange={e => setForm(f => ({ ...f, judge_license_number: e.target.value }))} placeholder="np. LS-2024-001" className={inputClass} />
@@ -552,7 +552,7 @@ export default function ProfilePage() {
                     <input type="text" value={form.shooting_patent_number} onChange={e => setForm(f => ({ ...f, shooting_patent_number: e.target.value }))} placeholder="np. PAT-2024-001" className={inputClass} />
                   </div>
                 </div>
-                {(member.role === 'judge' || member.role === 'admin') && (
+                {(member.role === 'judge' || member.role === 'admin' || member.role === 'superadmin') && (
                   <div className="mt-3">
                     <label className="text-xs text-muted block mb-1">Klasa sedziowska</label>
                     <select value={form.judge_class} onChange={e => setForm(f => ({ ...f, judge_class: e.target.value }))} className={inputClass}>

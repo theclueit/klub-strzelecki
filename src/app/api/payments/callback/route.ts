@@ -74,8 +74,12 @@ export async function POST(req: NextRequest) {
     // Check payment type by session prefix
     const isReservationPayment = sessionId.startsWith('RES-')
     const isRecreationalPayment = sessionId.startsWith('REC-')
+    const isAmmoPayment = sessionId.startsWith('AMMO-')
 
-    if (isRecreationalPayment) {
+    if (isAmmoPayment) {
+      // Mark ammo purchase as paid
+      await supabase.from('ammo_purchases').update({ status: 'paid' }).eq('payment_id', payment.id)
+    } else if (isRecreationalPayment) {
       // Mark recreational booking + lane reservation as paid
       await supabase.from('recreational_bookings').update({ paid: true, status: 'confirmed' }).eq('payment_id', payment.id)
       await supabase.from('lane_reservations').update({ paid: true }).eq('payment_id', payment.id)

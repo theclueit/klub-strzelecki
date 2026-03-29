@@ -79,8 +79,11 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null)
   const [bookingLoading, setBookingLoading] = useState(false)
-  const [guestForm, setGuestForm] = useState({ name: '', email: '', phone: '', address: '', document: '' })
+  interface GuestForm { name: string; email: string; phone: string; address: string; document: string }
+  const emptyGuest = (): GuestForm => ({ name: '', email: '', phone: '', address: '', document: '' })
+  const [guestForms, setGuestForms] = useState<GuestForm[]>([emptyGuest()])
   const [notes, setNotes] = useState('')
+  const peopleCount = guestForms.length
   const [bookingSuccess, setBookingSuccess] = useState(false)
   const [cart, setCart] = useState<CartItem[]>(() => {
     if (typeof window === 'undefined') return []
@@ -122,16 +125,20 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
   const dateObj = useMemo(() => new Date(selectedDate + 'T00:00:00'), [selectedDate])
   const isPast = dateObj <= new Date(new Date().toDateString())
 
-  // Grupuj pakiety po typie broni
+  // ID pakietów w koszyku — filtruj z widoku dostępnych
+  const cartPkgIds = useMemo(() => new Set(cart.map(c => c.pkg.id)), [cart])
+
+  // Grupuj pakiety po typie broni (bez tych już w koszyku)
   const groupedPackages = useMemo(() => {
     const groups: Record<string, Package[]> = {}
     for (const pkg of packages) {
+      if (cartPkgIds.has(pkg.id)) continue // już w koszyku
       const type = pkg.weapon?.type || 'other'
       if (!groups[type]) groups[type] = []
       groups[type].push(pkg)
     }
     return groups
-  }, [packages])
+  }, [packages, cartPkgIds])
 
   // Ładuj dostępne sloty po wybraniu pakietu i daty
   const loadAvailableSlots = useCallback(async () => {
@@ -366,30 +373,136 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
     return { slot: nextSlot, gapMin }
   }, [lastCartEndMin, availableSlots])
 
-  // Auto-select: preferuj ciągły slot (gap=0), jeśli brak — najbliższy
+  // Propozycja przesunięcia — gdy brak ciągłości, szukaj okna czasowego
+  // w którym wszystkie pakiety (koszyk + nowy) zmieściłyby się ciągiem
+  const [rearrangeProposal, setRearrangeProposal] = useState<{ startTime: string; endTime: string; newPkgSlot: TimeSlot } | null>(null)
+  const [showRearrangePrompt, setShowRearrangePrompt] = useState(false)
+
+  const rearrangeInfo = useMemo(() => {
+    if (!selectedPkg || !lastCartEndMin || availableSlots.length === 0) return null
+    // Sprawdź czy jest ciągły slot
+    const continuous = availableSlots.find(s => timeToMin(s.time) === lastCartEndMin)
+    if (continuous) return null // jest ciągłość, nie trzeba przesuwać
+
+    // Oblicz łączny czas trwania: koszyk (ta sama data) + nowy pakiet
+    const sameDateItems = cart.filter(c => c.date === selectedDate)
+    const totalDurationMin = sameDateItems.reduce((sum, c) => sum + c.pkg.duration_minutes, 0) + selectedPkg.duration_minutes
+
+    // Szukaj okna w dostępnych slotach, gdzie zmieści się cały blok ciągiem
+    // Sprawdzamy każdy slot jako potencjalny start nowego bloku
+    for (const startSlot of availableSlots) {
+      const blockStartMin = timeToMin(startSlot.time)
+      const blockEndMin = blockStartMin + totalDurationMin
+
+      // Sprawdź czy każdy 30-min fragment bloku ma dostępny slot
+      let allAvailable = true
+      for (let m = blockStartMin; m < blockEndMin; m += 30) {
+        const timeStr = `${Math.floor(m / 60).toString().padStart(2, '0')}:${(m % 60).toString().padStart(2, '0')}`
+        if (!availableSlots.some(s => s.time === timeStr)) {
+          allAvailable = false
+          break
+        }
+      }
+      if (!allAvailable) continue
+
+      // Znaleziono okno — oblicz gdzie nowy pakiet by się zaczął
+      const newPkgStartMin = blockStartMin + (totalDurationMin - selectedPkg.duration_minutes)
+      const newPkgSlot = availableSlots.find(s => timeToMin(s.time) === newPkgStartMin)
+      if (!newPkgSlot) continue
+
+      const endTime = `${Math.floor(blockEndMin / 60).toString().padStart(2, '0')}:${(blockEndMin % 60).toString().padStart(2, '0')}`
+      return {
+        startTime: startSlot.time,
+        endTime,
+        newPkgSlot,
+        // Nowe czasy dla pozycji w koszyku
+        cartRemap: sameDateItems.map((item, idx) => {
+          const itemStartMin = blockStartMin + sameDateItems.slice(0, idx).reduce((s, c) => s + c.pkg.duration_minutes, 0)
+          const itemEndMin = itemStartMin + item.pkg.duration_minutes
+          return {
+            cartIndex: cart.indexOf(item),
+            startTime: `${Math.floor(itemStartMin / 60).toString().padStart(2, '0')}:${(itemStartMin % 60).toString().padStart(2, '0')}`,
+            endTime: `${Math.floor(itemEndMin / 60).toString().padStart(2, '0')}:${(itemEndMin % 60).toString().padStart(2, '0')}`,
+            slot: availableSlots.find(s => s.time === `${Math.floor(itemStartMin / 60).toString().padStart(2, '0')}:${(itemStartMin % 60).toString().padStart(2, '0')}`) || item.slot,
+          }
+        }),
+      }
+    }
+    return null
+  }, [selectedPkg, lastCartEndMin, availableSlots, cart, selectedDate])
+
+  // Auto-select: preferuj ciągły slot (gap=0), jeśli brak — pokaż propozycję przesunięcia
   useEffect(() => {
     if (cart.length > 0 && selectedPkg && !selectedSlot && lastCartEndMin && availableSlots.length > 0) {
       // Najpierw szukaj ciągłego (dokładnie po zakończeniu poprzedniego)
       const continuous = availableSlots.find(s => timeToMin(s.time) === lastCartEndMin)
       if (continuous) {
         setSelectedSlot(continuous)
+        setShowRearrangePrompt(false)
+      } else if (rearrangeInfo) {
+        // Jest propozycja przesunięcia — pokaż prompt
+        setShowRearrangePrompt(true)
       } else if (suggestedSlotInfo) {
         setSelectedSlot(suggestedSlotInfo.slot)
       }
     }
-  }, [suggestedSlotInfo, cart.length, selectedPkg, lastCartEndMin, availableSlots])
+  }, [suggestedSlotInfo, cart.length, selectedPkg, lastCartEndMin, availableSlots, rearrangeInfo])
 
-  const cartTotal = cart.reduce((sum, item) => sum + Number(item.pkg.price_pln), 0)
+  const acceptRearrangement = () => {
+    if (!rearrangeInfo) return
+    // Przesuń pozycje w koszyku na nowe czasy
+    setCart(prev => {
+      const updated = [...prev]
+      for (const remap of rearrangeInfo.cartRemap) {
+        if (updated[remap.cartIndex]) {
+          updated[remap.cartIndex] = {
+            ...updated[remap.cartIndex],
+            slot: remap.slot,
+          }
+        }
+      }
+      return updated
+    })
+    // Ustaw slot nowego pakietu
+    setSelectedSlot(rearrangeInfo.newPkgSlot)
+    setShowRearrangePrompt(false)
+  }
+
+  const declineRearrangement = () => {
+    setShowRearrangePrompt(false)
+    // Wybierz najbliższy dostępny (z przerwą)
+    if (suggestedSlotInfo) {
+      setSelectedSlot(suggestedSlotInfo.slot)
+    }
+  }
+
+  const cartTotalPerPerson = cart.reduce((sum, item) => sum + Number(item.pkg.price_pln), 0)
+  const cartTotal = cartTotalPerPerson * peopleCount
+
+  const addPerson = () => setGuestForms(prev => [...prev, emptyGuest()])
+  const removePerson = (idx: number) => {
+    if (guestForms.length <= 1) return
+    setGuestForms(prev => prev.filter((_, i) => i !== idx))
+  }
+  const updateGuestForm = (idx: number, field: keyof GuestForm, value: string) => {
+    setGuestForms(prev => prev.map((g, i) => i === idx ? { ...g, [field]: value } : g))
+  }
 
   const handleBook = async () => {
     const itemsToBook = cart.length > 0 ? cart : (selectedPkg && selectedSlot ? [{ pkg: selectedPkg, date: selectedDate, slot: selectedSlot }] : [])
     if (itemsToBook.length === 0) return
-    if (!member && (!guestForm.name || !guestForm.phone || !guestForm.address || !guestForm.document)) {
-      alert('Podaj imię i nazwisko, adres zamieszkania, numer dokumentu i telefon')
-      return
+    if (!member) {
+      for (let i = 0; i < guestForms.length; i++) {
+        const g = guestForms[i]
+        if (!g.name || !g.phone || !g.address || !g.document) {
+          alert(`Osoba ${i + 1}: Podaj imię i nazwisko, adres, numer dokumentu i telefon`)
+          return
+        }
+      }
     }
     setBookingLoading(true)
     try {
+      // Jeden request z tablicą guests[] — backend tworzy rezerwacje per osoba × pakiet
       const res = await fetch('/api/recreational/book', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -401,27 +514,28 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
             instructor_id: item.slot.instructorId,
           })),
           member_id: member?.id || null,
-          guest_name: member ? null : guestForm.name,
-          guest_email: member ? null : guestForm.email,
-          guest_phone: member ? null : guestForm.phone,
-          guest_address: member ? null : guestForm.address,
-          guest_document: member ? null : guestForm.document,
+          guests: member ? undefined : guestForms,
+          guest_name: member ? null : guestForms[0]?.name,
+          guest_email: member ? null : guestForms[0]?.email,
+          guest_phone: member ? null : guestForms[0]?.phone,
+          guest_address: member ? null : guestForms[0]?.address,
+          guest_document: member ? null : guestForms[0]?.document,
           notes,
         }),
       })
       const data = await res.json()
+      if (!res.ok) {
+        alert(data.error || 'Błąd rezerwacji')
+        return
+      }
       if (data.redirect_url) {
         window.location.href = data.redirect_url
         return
       }
-      if (data.success) {
-        setBookingSuccess(true)
-        setSelectedSlot(null)
-        setCart([])
-        setShowCart(false)
-      } else {
-        alert(data.error || 'Błąd rezerwacji')
-      }
+      setBookingSuccess(true)
+      setSelectedSlot(null)
+      setCart([])
+      setShowCart(false)
     } catch {
       alert('Błąd rezerwacji')
     } finally {
@@ -549,9 +663,47 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
                               </span>
                             </div>
 
-                            {/* Info o przerwie */}
-                            {suggestedSlotInfo && suggestedSlotInfo.gapMin > 0 && !loadingSlots && availableSlots.length > 0 && (() => {
-                              // Sprawdź czy jest slot ciągły (gap=0)
+                            {/* Propozycja przesunięcia terminów */}
+                            {showRearrangePrompt && rearrangeInfo && !loadingSlots && (
+                              <div className="bg-primary/10 border border-primary/30 rounded-lg px-4 py-3 mb-2">
+                                <p className="text-sm font-medium mb-2">
+                                  <Clock className="w-4 h-4 inline mr-1.5" />
+                                  Brak ciągłego terminu po obecnych pakietach. Mogę przesunąć sloty, aby zachować ciągłość:
+                                </p>
+                                <div className="bg-background/50 rounded-lg px-3 py-2 mb-3 text-sm space-y-1">
+                                  {rearrangeInfo.cartRemap.map((remap, idx) => (
+                                    <div key={idx} className="flex items-center gap-2 text-muted">
+                                      <span>{cart[remap.cartIndex]?.pkg.name}:</span>
+                                      <span className="line-through text-red-400/70">{cart[remap.cartIndex]?.slot.time}</span>
+                                      <span>→</span>
+                                      <span className="font-semibold text-foreground">{remap.startTime}–{remap.endTime}</span>
+                                    </div>
+                                  ))}
+                                  <div className="flex items-center gap-2 text-primary font-medium">
+                                    <span>{selectedPkg?.name}:</span>
+                                    <span className="font-semibold">{rearrangeInfo.newPkgSlot.time}–{rearrangeInfo.endTime}</span>
+                                    <span className="text-xs text-muted">(nowy)</span>
+                                  </div>
+                                </div>
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={acceptRearrangement}
+                                    className="flex-1 px-4 py-2 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors text-sm"
+                                  >
+                                    Tak, przesuń
+                                  </button>
+                                  <button
+                                    onClick={declineRearrangement}
+                                    className="flex-1 px-4 py-2 border border-border rounded-lg hover:bg-background transition-colors text-sm"
+                                  >
+                                    Nie, zostaw z przerwą
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Info o przerwie (gdy brak propozycji przesunięcia) */}
+                            {!showRearrangePrompt && suggestedSlotInfo && suggestedSlotInfo.gapMin > 0 && !loadingSlots && availableSlots.length > 0 && (() => {
                               const continuousSlot = availableSlots.find(s => timeToMin(s.time) === lastCartEndMin)
                               const lastEndH = Math.floor(lastCartEndMin! / 60).toString().padStart(2, '0')
                               const lastEndM = (lastCartEndMin! % 60).toString().padStart(2, '0')
@@ -719,7 +871,7 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
               </div>
             </button>
             <div className="flex items-center gap-4">
-              <span className="text-xl font-bold text-primary">{cartTotal.toFixed(0)} zł</span>
+              <span className="text-xl font-bold text-primary">{cartTotalPerPerson.toFixed(0)} zł{peopleCount > 1 ? ` × ${peopleCount}` : ''}</span>
               <button
                 onClick={() => setShowCart(true)}
                 className="flex items-center gap-2 px-5 py-2.5 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors"
@@ -780,24 +932,50 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
               Dodaj kolejny pakiet
             </button>
 
-            {/* Dane klienta (gość) */}
+            {/* Dane uczestników (goście) */}
             {!member && (
               <div className="border-t border-border pt-4 mb-4">
-                <p className="text-sm font-medium mb-2 flex items-center gap-2">
-                  <User className="w-4 h-4" />
-                  Twoje dane (wymagane do wejścia)
-                </p>
-                <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2">
-                    <input type="text" placeholder="Imię i nazwisko *" value={guestForm.name} onChange={e => setGuestForm(f => ({ ...f, name: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
-                    <input type="tel" placeholder="Telefon *" value={guestForm.phone} onChange={e => setGuestForm(f => ({ ...f, phone: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
-                  </div>
-                  <input type="text" placeholder="Adres zamieszkania *" value={guestForm.address} onChange={e => setGuestForm(f => ({ ...f, address: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
-                  <div className="grid grid-cols-2 gap-2">
-                    <input type="text" placeholder="Nr dowodu / paszportu *" value={guestForm.document} onChange={e => setGuestForm(f => ({ ...f, document: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
-                    <input type="email" placeholder="Email" value={guestForm.email} onChange={e => setGuestForm(f => ({ ...f, email: e.target.value }))} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
-                  </div>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-medium flex items-center gap-2">
+                    <User className="w-4 h-4" />
+                    {guestForms.length === 1 ? 'Twoje dane' : `Uczestnicy (${guestForms.length})`}
+                  </p>
+                  <button
+                    onClick={addPerson}
+                    className="flex items-center gap-1 text-xs text-primary hover:text-primary-dark font-medium"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Dodaj osobę
+                  </button>
                 </div>
+                <div className="space-y-3">
+                  {guestForms.map((guest, idx) => (
+                    <div key={idx} className={`space-y-2 ${guestForms.length > 1 ? 'bg-background/50 border border-border rounded-lg p-3' : ''}`}>
+                      {guestForms.length > 1 && (
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-semibold text-muted">Osoba {idx + 1}</span>
+                          <button onClick={() => removePerson(idx)} className="text-xs text-red-500 hover:text-red-400">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 gap-2">
+                        <input type="text" placeholder="Imię i nazwisko *" value={guest.name} onChange={e => updateGuestForm(idx, 'name', e.target.value)} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                        <input type="tel" placeholder="Telefon *" value={guest.phone} onChange={e => updateGuestForm(idx, 'phone', e.target.value)} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                      </div>
+                      <input type="text" placeholder="Adres zamieszkania *" value={guest.address} onChange={e => updateGuestForm(idx, 'address', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                      <div className="grid grid-cols-2 gap-2">
+                        <input type="text" placeholder="Nr dowodu / paszportu *" value={guest.document} onChange={e => updateGuestForm(idx, 'document', e.target.value)} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                        <input type="email" placeholder="Email" value={guest.email} onChange={e => updateGuestForm(idx, 'email', e.target.value)} className="px-3 py-2 bg-background border border-border rounded-lg text-sm" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {guestForms.length > 1 && (
+                  <p className="text-xs text-muted mt-2">
+                    Każda osoba otrzyma te same pakiety. Suma: {cartTotalPerPerson.toFixed(0)} zł × {guestForms.length} os. = <span className="font-bold text-primary">{cartTotal.toFixed(0)} zł</span>
+                  </p>
+                )}
               </div>
             )}
 
@@ -813,7 +991,7 @@ export default function RecreationalClient({ packages, lanes }: { packages: Pack
             {/* Suma i przycisk */}
             <div className="flex items-center justify-between pt-4 border-t border-border">
               <div>
-                <p className="text-xs text-muted">Do zapłaty</p>
+                <p className="text-xs text-muted">Do zapłaty{peopleCount > 1 ? ` (${peopleCount} os.)` : ''}</p>
                 <p className="text-2xl font-bold text-primary">{cartTotal.toFixed(0)} zł</p>
               </div>
               <button

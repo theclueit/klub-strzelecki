@@ -1,10 +1,14 @@
 import { createHash } from 'crypto'
 
-const P24_MERCHANT_ID = process.env.P24_MERCHANT_ID!
+const P24_MERCHANT_ID = process.env.P24_MERCHANT_ID || ''
 const P24_POS_ID = process.env.P24_POS_ID || P24_MERCHANT_ID
-const P24_CRC_KEY = process.env.P24_CRC_KEY!
-const P24_API_KEY = process.env.P24_API_KEY!
+const P24_CRC_KEY = process.env.P24_CRC_KEY || ''
+const P24_API_KEY = process.env.P24_API_KEY || ''
 const P24_SANDBOX = process.env.P24_SANDBOX === 'true'
+
+// Tryb zaślepki — symuluj płatność (do testów)
+// Włączany jawnie przez P24_STUB_MODE=true LUB gdy brak kluczy
+const P24_STUB_MODE = process.env.P24_STUB_MODE === 'true' || !P24_MERCHANT_ID || !P24_API_KEY || !P24_CRC_KEY
 
 const BASE_URL = P24_SANDBOX
   ? 'https://sandbox.przelewy24.pl'
@@ -30,6 +34,15 @@ export interface P24RegisterParams {
 
 export async function p24RegisterTransaction(params: P24RegisterParams): Promise<{ token: string; redirectUrl: string }> {
   const { sessionId, amount, currency, description, email, urlReturn, urlStatus } = params
+
+  // Tryb zaślepki — symuluj sukces i przekieruj na stronę sukcesu
+  if (P24_STUB_MODE) {
+    console.log('[P24 STUB] Symulacja rejestracji transakcji:', { sessionId, amount, description })
+    return {
+      token: `STUB-${sessionId}`,
+      redirectUrl: urlReturn,
+    }
+  }
 
   const sign = sha384(
     JSON.stringify({
@@ -86,6 +99,12 @@ export interface P24VerifyParams {
 
 export async function p24VerifyTransaction(params: P24VerifyParams): Promise<boolean> {
   const { sessionId, orderId, amount, currency } = params
+
+  // Tryb zaślepki — zawsze sukces
+  if (P24_STUB_MODE) {
+    console.log('[P24 STUB] Symulacja weryfikacji transakcji:', { sessionId, orderId })
+    return true
+  }
 
   const sign = sha384(
     JSON.stringify({

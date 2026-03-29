@@ -125,7 +125,7 @@ export default function JudgePage() {
   // Auto-login — run every time authMember becomes available while on login screen
   useEffect(() => {
     if (authLoading || step !== 'login') return
-    if (authMember && (authMember.role === 'judge' || authMember.role === 'admin')) {
+    if (authMember && (authMember.role === 'judge' || authMember.role === 'admin' || authMember.role === 'superadmin')) {
       setJudge(authMember)
       setAutoLoginDone(true)
 
@@ -580,7 +580,7 @@ export default function JudgePage() {
 
   // LOGIN
   if (step === 'login') {
-    if (authLoading || !autoLoginDone || (authMember && (authMember.role === 'judge' || authMember.role === 'admin'))) {
+    if (authLoading || !autoLoginDone || (authMember && (authMember.role === 'judge' || authMember.role === 'admin' || authMember.role === 'superadmin'))) {
       return <div className="p-16 text-center text-muted">Ładowanie...</div>
     }
     return (

@@ -49,7 +49,7 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
   Object.values(discStats).forEach(d => { d.avg = d.count > 0 ? Math.round(d.avg / d.count) : 0 })
 
   const badges: { label: string; color: string }[] = []
-  if (member.role === 'judge' || member.role === 'admin') {
+  if (member.role === 'judge' || member.role === 'admin' || member.role === 'superadmin') {
     badges.push({ label: member.judge_class ? `Sędzia ${member.judge_class}` : 'Sędzia', color: 'bg-primary/20 text-primary' })
   }
   if (member.is_range_officer) badges.push({ label: 'Prowadzący strzelanie', color: 'bg-blue-500/20 text-blue-400' })

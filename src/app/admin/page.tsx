@@ -227,6 +227,12 @@ export default function AdminPage() {
   const [showInstructorScheduleForm, setShowInstructorScheduleForm] = useState(false)
   const [instructorScheduleForm, setInstructorScheduleForm] = useState({ instructor_id: '', day_of_week: '1', start_time: '09:00', end_time: '17:00' })
 
+  // Login history (superadmin only)
+  interface LoginEntry { id: string; member_id: string | null; auth_id: string | null; email: string | null; full_name: string | null; ip_address: string | null; user_agent: string | null; event_type: string; created_at: string }
+  const [loginHistory, setLoginHistory] = useState<LoginEntry[]>([])
+  const [loginHistoryLoading, setLoginHistoryLoading] = useState(false)
+  const [showLoginHistory, setShowLoginHistory] = useState(false)
+
   // Attendance list preview
   const [attendancePreview, setAttendancePreview] = useState<{
     eventId: string
@@ -286,11 +292,11 @@ export default function AdminPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!loading && (!member || member.role !== 'admin')) {
+    if (!loading && (!member || !['admin', 'superadmin'].includes(member.role))) {
       router.push('/')
       return
     }
-    if (member?.role === 'admin') {
+    if (member?.role === 'admin' || member?.role === 'superadmin') {
       loadAll()
       loadOnlineUsers()
       const onlineInterval = setInterval(loadOnlineUsers, 30_000)
@@ -338,6 +344,18 @@ export default function AdminPage() {
       .gte('last_seen_at', fiveMinAgo)
       .order('last_seen_at', { ascending: false })
     setOnlineUsers((data ?? []) as typeof onlineUsers)
+  }
+
+  // ---- LOGIN HISTORY (superadmin) ----
+  async function loadLoginHistory() {
+    setLoginHistoryLoading(true)
+    const { data } = await supabase
+      .from('login_history')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200)
+    setLoginHistory((data ?? []) as LoginEntry[])
+    setLoginHistoryLoading(false)
   }
 
   // ---- SHOOTING RANGES ----
@@ -1732,7 +1750,7 @@ export default function AdminPage() {
   }
 
   if (loading) return <div className="p-8 text-center text-muted">Ladowanie...</div>
-  if (!member || member.role !== 'admin') return null
+  if (!member || !['admin', 'superadmin'].includes(member.role)) return null
 
   const eventTypeLabels: Record<string, string> = {
     competition: 'Zawody', training: 'Trening', course: 'Kurs', other: 'Inne',
@@ -1788,8 +1806,8 @@ export default function AdminPage() {
             ) : (
               <div className="divide-y divide-border/50">
                 {onlineUsers.map(u => {
-                  const roleLabels: Record<string, string> = { admin: 'Admin', judge: 'Sędzia', member: 'Członek', registrar: 'Rejestrator', range_registrar: 'Rej. strzelnica' }
-                  const roleColors: Record<string, string> = { admin: 'bg-primary/20 text-primary', judge: 'bg-blue-500/20 text-blue-400', member: 'bg-gray-500/20 text-gray-400', registrar: 'bg-purple-500/20 text-purple-400', range_registrar: 'bg-orange-500/20 text-orange-400' }
+                  const roleLabels: Record<string, string> = { superadmin: 'Superadmin', admin: 'Admin', judge: 'Sędzia', member: 'Członek', registrar: 'Rejestrator', range_registrar: 'Rej. strzelnica' }
+                  const roleColors: Record<string, string> = { superadmin: 'bg-red-500/20 text-red-400', admin: 'bg-primary/20 text-primary', judge: 'bg-blue-500/20 text-blue-400', member: 'bg-gray-500/20 text-gray-400', registrar: 'bg-purple-500/20 text-purple-400', range_registrar: 'bg-orange-500/20 text-orange-400' }
                   const ago = Math.round((Date.now() - new Date(u.last_seen_at).getTime()) / 60_000)
                   return (
                     <div key={u.id} className="flex items-center justify-between px-4 py-2.5">
@@ -4620,6 +4638,81 @@ export default function AdminPage() {
                   </button>
                 </div>
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Login History — superadmin only */}
+      {member.role === 'superadmin' && (
+        <div className="mt-8 bg-card border border-border rounded-xl p-6">
+          <button
+            onClick={() => { setShowLoginHistory(!showLoginHistory); if (!showLoginHistory && loginHistory.length === 0) loadLoginHistory() }}
+            className="flex items-center gap-3 w-full text-left"
+          >
+            <History className="w-5 h-5 text-primary" />
+            <h2 className="text-lg font-bold flex-1">Historia logowań</h2>
+            {showLoginHistory ? <ChevronUp className="w-4 h-4 text-muted" /> : <ChevronDown className="w-4 h-4 text-muted" />}
+          </button>
+
+          {showLoginHistory && (
+            <div className="mt-4">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm text-muted">Ostatnie 200 zdarzeń logowania</p>
+                <button onClick={loadLoginHistory} disabled={loginHistoryLoading} className="text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-background disabled:opacity-50">
+                  {loginHistoryLoading ? 'Ładowanie...' : 'Odśwież'}
+                </button>
+              </div>
+
+              {loginHistoryLoading ? (
+                <p className="text-sm text-muted py-4 text-center">Ładowanie...</p>
+              ) : loginHistory.length === 0 ? (
+                <p className="text-sm text-muted py-4 text-center">Brak wpisów.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-left text-muted">
+                        <th className="py-2 px-3 font-medium">Data</th>
+                        <th className="py-2 px-3 font-medium">Użytkownik</th>
+                        <th className="py-2 px-3 font-medium">Email</th>
+                        <th className="py-2 px-3 font-medium">Typ</th>
+                        <th className="py-2 px-3 font-medium">IP</th>
+                        <th className="py-2 px-3 font-medium">Urządzenie</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {loginHistory.map(entry => {
+                        const eventLabels: Record<string, { label: string; color: string }> = {
+                          login: { label: 'Logowanie', color: 'text-green-400' },
+                          logout: { label: 'Wylogowanie', color: 'text-red-400' },
+                          login_resolved: { label: 'Logowanie ✓', color: 'text-green-400' },
+                          token_refresh: { label: 'Odświeżenie', color: 'text-muted' },
+                        }
+                        const ev = eventLabels[entry.event_type] || { label: entry.event_type, color: 'text-muted' }
+                        // Parse user agent for readable device
+                        const ua = entry.user_agent || ''
+                        const isMobile = /Mobile|Android|iPhone/i.test(ua)
+                        const browser = /Chrome/.test(ua) ? 'Chrome' : /Firefox/.test(ua) ? 'Firefox' : /Safari/.test(ua) ? 'Safari' : /Edge/.test(ua) ? 'Edge' : 'Inna'
+                        const deviceLabel = isMobile ? `📱 ${browser}` : `💻 ${browser}`
+
+                        return (
+                          <tr key={entry.id} className="border-b border-border/30 hover:bg-background/50">
+                            <td className="py-2 px-3 whitespace-nowrap text-xs">
+                              {new Date(entry.created_at).toLocaleString('pl-PL', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                            </td>
+                            <td className="py-2 px-3 font-medium">{entry.full_name || '—'}</td>
+                            <td className="py-2 px-3 text-muted">{entry.email || '—'}</td>
+                            <td className={`py-2 px-3 font-medium ${ev.color}`}>{ev.label}</td>
+                            <td className="py-2 px-3 text-xs text-muted font-mono">{entry.ip_address || '—'}</td>
+                            <td className="py-2 px-3 text-xs" title={ua}>{deviceLabel}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
         </div>

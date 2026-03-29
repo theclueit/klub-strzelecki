@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
-import { Target, Clock, CheckCircle, XCircle, Package, User, ArrowRight, Shield, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Target, Clock, CheckCircle, XCircle, Package, User, ArrowRight, Shield, Loader2, ChevronLeft, ChevronRight, Plus, QrCode, X } from 'lucide-react'
 import Link from 'next/link'
 
 interface Booking {
@@ -47,6 +47,12 @@ export default function InstructorPage() {
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loadingBookings, setLoadingBookings] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  // Dodatkowa amunicja
+  const [ammoModal, setAmmoModal] = useState<string | null>(null) // booking_id
+  const [ammoItems, setAmmoItems] = useState<{ id: string; name: string; caliber: string; sell_price_pln: number; stock: number }[]>([])
+  const [ammoForm, setAmmoForm] = useState({ item_id: '', quantity: '10' })
+  const [ammoSaving, setAmmoSaving] = useState(false)
+  const [ammoQr, setAmmoQr] = useState<{ url: string; total: number; name: string } | null>(null)
 
   const dateObj = new Date(selectedDate + 'T00:00:00')
 
@@ -119,6 +125,55 @@ export default function InstructorPage() {
       alert('Błąd: ' + (err as any).message)
     } finally {
       setActionLoading(null)
+    }
+  }
+
+  const openAmmoModal = async (bookingId: string) => {
+    setAmmoModal(bookingId)
+    setAmmoQr(null)
+    setAmmoForm({ item_id: '', quantity: '10' })
+    // Załaduj amunicję z magazynu
+    const { data } = await supabase
+      .from('inventory_items')
+      .select('id, name, caliber, sell_price_pln, quantity')
+      .eq('category', 'ammunition')
+      .gt('quantity', 0)
+      .not('sell_price_pln', 'is', null)
+      .order('name')
+    setAmmoItems((data ?? []).map(d => ({ ...d, stock: d.quantity, sell_price_pln: Number(d.sell_price_pln) })))
+  }
+
+  const handleAmmoCreate = async () => {
+    if (!ammoForm.item_id || !ammoForm.quantity || parseInt(ammoForm.quantity) <= 0) {
+      alert('Wybierz amunicję i podaj ilość')
+      return
+    }
+    setAmmoSaving(true)
+    try {
+      const res = await fetch('/api/ammo/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          booking_id: ammoModal,
+          inventory_item_id: ammoForm.item_id,
+          quantity: parseInt(ammoForm.quantity),
+          instructor_id: member?.id,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        alert(data.error || 'Błąd')
+        return
+      }
+      setAmmoQr({
+        url: data.payment_url,
+        total: data.total_pln,
+        name: data.ammo_name,
+      })
+    } catch (err: any) {
+      alert(err.message || 'Błąd')
+    } finally {
+      setAmmoSaving(false)
     }
   }
 
@@ -254,6 +309,17 @@ export default function InstructorPage() {
                         Potwierdź zwrot broni (zakończ)
                       </button>
                     )}
+
+                    {/* Dodatkowa amunicja */}
+                    {b.ammo_issued && (
+                      <button
+                        onClick={() => openAmmoModal(b.id)}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border border-purple-500/30 text-purple-400 hover:bg-purple-500/10 transition-colors"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Dodaj amunicję
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -267,6 +333,108 @@ export default function InstructorPage() {
           &larr; Wróć na stronę główną
         </Link>
       </div>
+
+      {/* Modal dodatkowej amunicji */}
+      {ammoModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <Package className="w-5 h-5 text-purple-400" />
+                Dodatkowa amunicja
+              </h2>
+              <button onClick={() => { setAmmoModal(null); setAmmoQr(null) }} className="p-1 text-muted hover:text-foreground">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {ammoQr ? (
+              /* QR Code do skanowania przez klienta */
+              <div className="text-center space-y-4">
+                <div className="bg-white rounded-xl p-4 inline-block">
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(ammoQr.url)}`}
+                    alt="QR Code"
+                    className="w-48 h-48"
+                  />
+                </div>
+                <div>
+                  <p className="font-semibold">{ammoQr.name}</p>
+                  <p className="text-2xl font-bold text-primary">{Number(ammoQr.total).toFixed(0)} zł</p>
+                </div>
+                <p className="text-sm text-muted">
+                  Klient skanuje QR kod telefonem, aby opłacić dodatkową amunicję
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { navigator.clipboard.writeText(ammoQr.url); alert('Link skopiowany!') }}
+                    className="flex-1 px-4 py-2 border border-border rounded-lg text-sm hover:bg-background transition-colors"
+                  >
+                    Kopiuj link
+                  </button>
+                  <button
+                    onClick={() => setAmmoQr(null)}
+                    className="flex-1 px-4 py-2 border border-border rounded-lg text-sm hover:bg-background transition-colors"
+                  >
+                    Kolejna porcja
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Formularz wyboru amunicji */
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-medium text-muted mb-1 block">Amunicja</label>
+                  <select
+                    value={ammoForm.item_id}
+                    onChange={e => setAmmoForm(f => ({ ...f, item_id: e.target.value }))}
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                  >
+                    <option value="">Wybierz...</option>
+                    {ammoItems.map(a => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} — {a.sell_price_pln.toFixed(2)} zł/szt. (stan: {a.stock})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-muted mb-1 block">Ilość (szt.)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={ammoForm.quantity}
+                    onChange={e => setAmmoForm(f => ({ ...f, quantity: e.target.value }))}
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm"
+                  />
+                </div>
+
+                {ammoForm.item_id && parseInt(ammoForm.quantity) > 0 && (
+                  <div className="bg-background rounded-lg p-3 text-center">
+                    <p className="text-xs text-muted">Do zapłaty</p>
+                    <p className="text-2xl font-bold text-primary">
+                      {(
+                        (ammoItems.find(a => a.id === ammoForm.item_id)?.sell_price_pln || 0) *
+                        parseInt(ammoForm.quantity || '0')
+                      ).toFixed(0)} zł
+                    </p>
+                  </div>
+                )}
+
+                <button
+                  onClick={handleAmmoCreate}
+                  disabled={ammoSaving || !ammoForm.item_id}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50"
+                >
+                  {ammoSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <QrCode className="w-4 h-4" />}
+                  Generuj QR kod do zapłaty
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

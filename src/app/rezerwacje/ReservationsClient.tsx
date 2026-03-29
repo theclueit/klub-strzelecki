@@ -31,6 +31,8 @@ interface Reservation {
   paid: boolean
   guest_name: string | null
   notes: string | null
+  hold_token: string | null
+  hold_expires_at: string | null
   event?: { title: string } | null
   member?: { full_name: string } | null
 }
@@ -107,6 +109,13 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
   const [bookingNotes, setBookingNotes] = useState('')
   const [bookingLoading, setBookingLoading] = useState(false)
   const [paymentLoading, setPaymentLoading] = useState<string | null>(null)
+  // Hold (temporary slot lock)
+  const [holdToken, setHoldToken] = useState<string | null>(null)
+  const [holdExpiresAt, setHoldExpiresAt] = useState<Date | null>(null)
+  const [holdTimeLeft, setHoldTimeLeft] = useState(0) // seconds
+  const [holdExtending, setHoldExtending] = useState(false)
+  const [showExtendPrompt, setShowExtendPrompt] = useState(false)
+
   // Guest booking form (when not logged in)
   const [guestBooking, setGuestBooking] = useState({
     full_name: '',
@@ -168,7 +177,12 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
       .eq('lane_id', selectedLane.id)
       .eq('reservation_date', selectedDate)
       .neq('status', 'cancelled')
-    setReservations((data ?? []) as any[])
+    // Filter out expired holds client-side (server cleanup is async)
+    const now = new Date().toISOString()
+    const filtered = (data ?? []).filter((r: any) =>
+      r.status !== 'hold' || !r.hold_expires_at || r.hold_expires_at > now
+    )
+    setReservations(filtered as any[])
     setLoadingRes(false)
   }, [selectedLane, selectedDate])
 
@@ -205,6 +219,71 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
 
   useEffect(() => { loadReservations() }, [loadReservations])
   useEffect(() => { loadWeekStats() }, [loadWeekStats])
+
+  // Hold countdown timer
+  useEffect(() => {
+    if (!holdExpiresAt || !holdToken) return
+    const tick = () => {
+      const left = Math.max(0, Math.round((holdExpiresAt.getTime() - Date.now()) / 1000))
+      setHoldTimeLeft(left)
+      if (left <= 30 && left > 0 && !showExtendPrompt) {
+        setShowExtendPrompt(true)
+      }
+      if (left <= 0) {
+        // Hold expired — close modal and reload
+        setHoldToken(null)
+        setHoldExpiresAt(null)
+        setShowBooking(null)
+        setShowExtendPrompt(false)
+        loadReservations()
+      }
+    }
+    tick()
+    const iv = setInterval(tick, 1000)
+    return () => clearInterval(iv)
+  }, [holdExpiresAt, holdToken, showExtendPrompt])
+
+  // Release hold when modal closes without booking
+  const releaseHold = useCallback(async () => {
+    if (!holdToken) return
+    try {
+      await fetch('/api/reservations/hold', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hold_token: holdToken }),
+      })
+    } catch {}
+    setHoldToken(null)
+    setHoldExpiresAt(null)
+    setShowExtendPrompt(false)
+    loadReservations()
+  }, [holdToken])
+
+  // Extend hold
+  const extendHold = useCallback(async () => {
+    if (!holdToken) return
+    setHoldExtending(true)
+    try {
+      const res = await fetch('/api/reservations/hold', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hold_token: holdToken }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setHoldExpiresAt(new Date(data.expires_at))
+        setShowExtendPrompt(false)
+      } else {
+        // Hold expired server-side
+        setHoldToken(null)
+        setHoldExpiresAt(null)
+        setShowBooking(null)
+        setShowExtendPrompt(false)
+        loadReservations()
+      }
+    } catch {}
+    setHoldExtending(false)
+  }, [holdToken])
 
   const slots = useMemo(() => getLaneSlots(selectedLane), [selectedLane])
   const closeMin = useMemo(() => {
@@ -294,34 +373,48 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
 
   // Desktop drag-to-select uses pointer events to distinguish mouse from touch.
   // Touch/click uses tap-to-select: 1st tap = start, 2nd tap = end.
+  // Refs mirror dragStart/dragEnd so the global mouseup handler always has current values
+  // (state updates are async, but mouseup fires before React re-renders).
   const pointerIsMouse = useRef(false)
+  const dragStartRef = useRef(dragStart)
+  const dragEndRef = useRef(dragEnd)
+  dragStartRef.current = dragStart
+  dragEndRef.current = dragEnd
 
   const handlePointerDown = (sn: number, slotIdx: number, pointerType: string) => {
     if (isPast) return
     if (pointerType === 'mouse') {
-      // Desktop: start drag
+      // Desktop: start drag — update refs immediately for mouseup handler
+      const pos = { sn, slotIdx }
       pointerIsMouse.current = true
       isDragging.current = true
-      setDragStart({ sn, slotIdx })
-      setDragEnd({ sn, slotIdx })
+      dragStartRef.current = pos
+      dragEndRef.current = pos
+      setDragStart(pos)
+      setDragEnd(pos)
     }
     // Touch: do nothing here — onClick will handle tap-to-select
   }
 
   const handleDragMove = (sn: number, slotIdx: number) => {
     if (!isDragging.current) return
-    setDragEnd({ sn, slotIdx })
+    const pos = { sn, slotIdx }
+    dragEndRef.current = pos
+    setDragEnd(pos)
   }
 
   const handleDragEnd = () => {
-    if (!isDragging.current || !dragStart || !dragEnd) {
-      isDragging.current = false
-      return
-    }
+    if (!isDragging.current) return
     isDragging.current = false
 
+    const start = dragStartRef.current
+    const end = dragEndRef.current
+    if (!start || !end) return
+
     // Open booking from drag selection
-    openBookingFromSelection(dragStart, dragEnd)
+    openBookingFromSelection(start, end)
+    dragStartRef.current = null
+    dragEndRef.current = null
     setDragStart(null)
     setDragEnd(null)
     // Block the upcoming click event from re-triggering
@@ -352,8 +445,8 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
     }
   }
 
-  // Shared: open booking modal from two corner points
-  const openBookingFromSelection = (start: { sn: number; slotIdx: number }, end: { sn: number; slotIdx: number }) => {
+  // Shared: open booking modal from two corner points — creates a hold
+  const openBookingFromSelection = async (start: { sn: number; slotIdx: number }, end: { sn: number; slotIdx: number }) => {
     const sel = {
       minSn: Math.min(start.sn, end.sn),
       maxSn: Math.max(start.sn, end.sn),
@@ -371,11 +464,45 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
       if (!allFree) break
     }
 
-    if (allFree && slots[sel.minSlot]) {
+    if (allFree && slots[sel.minSlot] && selectedLane) {
       const stationCount = sel.maxSn - sel.minSn + 1
-      setShowBooking({ stationNumber: sel.minSn, slotTime: slots[sel.minSlot] })
-      setBookingSlots(slotCount)
-      setBookingStations(stationCount)
+      const startTime = slots[sel.minSlot]
+      const endMin = timeToMin(startTime) + slotCount * 30
+      const endTime = `${Math.floor(endMin / 60).toString().padStart(2, '0')}:${(endMin % 60).toString().padStart(2, '0')}`
+
+      // Create hold via API
+      try {
+        const res = await fetch('/api/reservations/hold', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lane_id: selectedLane.id,
+            station_number: sel.minSn,
+            stations_count: stationCount,
+            reservation_date: selectedDate,
+            start_time: startTime,
+            end_time: endTime,
+          }),
+        })
+        const data = await res.json()
+        if (!res.ok) {
+          if (res.status === 409) {
+            alert('Ten slot jest już zajęty lub ktoś go właśnie rezerwuje.')
+            loadReservations()
+          }
+          return
+        }
+        setHoldToken(data.hold_token)
+        setHoldExpiresAt(new Date(data.expires_at))
+        setHoldTimeLeft(data.hold_seconds)
+        setShowExtendPrompt(false)
+        setShowBooking({ stationNumber: sel.minSn, slotTime: startTime })
+        setBookingSlots(slotCount)
+        setBookingStations(stationCount)
+        loadReservations() // reload to show hold in grid
+      } catch {
+        alert('Błąd połączenia z serwerem')
+      }
     }
   }
 
@@ -386,16 +513,21 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
     }
     window.addEventListener('mouseup', onUp)
     return () => window.removeEventListener('mouseup', onUp)
-  }, [dragStart, dragEnd, slots, slotMap])
+  }, [slots, slotMap])
+
+  const isRecreational = (res: Reservation) => res.notes?.startsWith('Strzelanie rekreacyjne')
+  const isHold = (res: Reservation) => res.status === 'hold'
 
   const getSlotColor = (res: Reservation | undefined) => {
     if (!res) return 'bg-green-500/20 border-green-500/40 hover:bg-green-500/30' // wolne
+    if (isHold(res)) return 'bg-amber-500/20 border-amber-500/40 animate-pulse' // ktoś rezerwuje
     if (res.event_id) return 'bg-blue-500/30 border-blue-500/50' // zawody
+    if (isRecreational(res)) return 'bg-purple-500/30 border-purple-500/50' // pakiet rekreacyjny
     if (res.paid) return 'bg-red-500/30 border-red-500/50' // opłacone
     return 'bg-zinc-400/30 border-zinc-400/50' // zarezerwowane nieopłacone
   }
 
-  const isRangeStaff = member && (member.role === 'admin' || member.role === 'registrar' || member.role === 'range_registrar')
+  const isRangeStaff = member && (member.role === 'admin' || member.role === 'superadmin' || member.role === 'registrar' || member.role === 'range_registrar')
 
   // Check if a slot is too close for online booking (only staff can book)
   const isSlotTooClose = (slotTime: string) => {
@@ -411,7 +543,17 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
   }
 
   const getSlotLabel = (res: Reservation) => {
+    if (isHold(res)) return 'Ktoś rezerwuje...'
     if (res.event_id) return res.event?.title || 'Zawody'
+    if (isRecreational(res)) {
+      // Pakiet rekreacyjny — admin widzi nazwisko, reszta widzi "Pakiet"
+      if (isRangeStaff) {
+        const name = res.guest_name || res.member?.full_name || ''
+        const pkgName = res.notes?.replace('Strzelanie rekreacyjne: ', '') || 'Pakiet'
+        return name ? `${name} · ${pkgName}` : pkgName
+      }
+      return 'Pakiet rekreacyjny'
+    }
     // Imię widoczne tylko dla właściciela rezerwacji lub admina/rejestratora
     if (isRangeStaff || (member && res.member_id === member.id)) {
       return res.member?.full_name || res.guest_name || 'Zarezerwowane'
@@ -430,6 +572,13 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
       }
     }
 
+    if (!holdToken) {
+      alert('Rezerwacja wygasła. Wybierz slot ponownie.')
+      setShowBooking(null)
+      loadReservations()
+      return
+    }
+
     setBookingLoading(true)
     try {
       const startMin = timeToMin(showBooking.slotTime)
@@ -441,73 +590,38 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
       const hours = (bookingSlots * 30) / 60
       const totalPln = selectedLane.price_per_hour_pln * hours * bookingStations
 
-      if (member) {
-        // Zalogowany użytkownik — bezpośredni insert przez Supabase
-        const inserts = Array.from({ length: bookingStations }, (_, i) => ({
-          lane_id: selectedLane.id,
-          station_number: showBooking.stationNumber + i,
-          member_id: member.id,
-          reservation_date: selectedDate,
-          start_time: startTime,
-          end_time: endTime,
-          status: 'reserved',
-          paid: totalPln <= 0,
+      // Convert hold → confirmed reservation via API
+      const res = await fetch('/api/reservations/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          hold_token: holdToken,
+          member_id: member?.id || null,
+          guest_name: member ? (member as any).full_name : guestBooking.full_name,
+          guest_email: !member ? guestBooking.email : undefined,
+          guest_phone: !member ? (guestBooking.phone || null) : undefined,
+          guest_address: !member ? guestBooking.address : undefined,
+          guest_document: !member ? guestBooking.document : undefined,
           notes: bookingNotes || null,
-        }))
-
-        const { data: resArr, error } = await supabase
-          .from('lane_reservations')
-          .insert(inserts)
-          .select()
-
-        if (error) throw error
-        const firstRes = resArr?.[0]
-
-        if (payNow && totalPln > 0 && firstRes) {
-          const payRes = await fetch('/api/reservations/pay', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ reservation_id: firstRes.id }),
-          })
-          const payData = await payRes.json()
-          if (payData.redirect_url) {
-            window.location.href = payData.redirect_url
-            return
-          }
-        }
-      } else {
-        // Gość — API tworzy konto i rezerwację
-        const res = await fetch('/api/reservations/guest', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            lane_id: selectedLane.id,
-            station_number: showBooking.stationNumber,
-            stations_count: bookingStations,
-            reservation_date: selectedDate,
-            start_time: startTime,
-            end_time: endTime,
-            notes: bookingNotes || null,
-            guest_name: guestBooking.full_name,
-            guest_email: guestBooking.email,
-            guest_phone: guestBooking.phone || null,
-            guest_address: guestBooking.address,
-            guest_document: guestBooking.document,
-            pay_now: payNow,
-          }),
-        })
-        const data = await res.json()
-        if (!res.ok) {
-          alert('Błąd: ' + (data.error || 'Nieznany błąd'))
-          return
-        }
-        if (data.redirect_url) {
-          window.location.href = data.redirect_url
-          return
-        }
+          paid: totalPln <= 0,
+          pay_now: payNow,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        alert('Błąd: ' + (data.error || 'Nieznany błąd'))
+        return
       }
 
+      if (data.redirect_url) {
+        window.location.href = data.redirect_url
+        return
+      }
+
+      setHoldToken(null)
+      setHoldExpiresAt(null)
       setShowBooking(null)
+      setShowExtendPrompt(false)
       setBookingNotes('')
       setBookingSlots(2)
       setBookingStations(1)
@@ -748,6 +862,14 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
           <span>Zarezerwowane i opłacone</span>
         </div>
         <div className="flex items-center gap-2">
+          <span className="w-4 h-4 rounded bg-amber-500/20 border border-amber-500/40 animate-pulse" />
+          <span>Ktoś rezerwuje</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="w-4 h-4 rounded bg-purple-500/30 border border-purple-500/50" />
+          <span>Pakiet rekreacyjny</span>
+        </div>
+        <div className="flex items-center gap-2">
           <span className="w-4 h-4 rounded bg-blue-500/30 border border-blue-500/50" />
           <span>Zawody</span>
         </div>
@@ -957,11 +1079,15 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
                             if (info && info.isFirst) {
                               const { res, span } = info
                               const isMine = member && res.member_id === member.id
-                              const color = res.event_id
-                                ? 'bg-blue-500/30 border-blue-500/50 text-blue-300'
-                                : res.paid
-                                  ? 'bg-red-500/30 border-red-500/50 text-red-300'
-                                  : 'bg-zinc-400/30 border-zinc-400/50 text-zinc-300'
+                              const color = isHold(res)
+                                ? 'bg-amber-500/20 border-amber-500/40 text-amber-300 animate-pulse'
+                                : res.event_id
+                                  ? 'bg-blue-500/30 border-blue-500/50 text-blue-300'
+                                  : isRecreational(res)
+                                    ? 'bg-purple-500/30 border-purple-500/50 text-purple-300'
+                                    : res.paid
+                                      ? 'bg-red-500/30 border-red-500/50 text-red-300'
+                                      : 'bg-zinc-400/30 border-zinc-400/50 text-zinc-300'
                               return (
                                 <td key={slotTime} colSpan={span} className="py-0.5 px-0.5 border-l border-border/30">
                                   <div
@@ -1045,12 +1171,21 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
 
       {/* Modal rezerwacji */}
       {showBooking && selectedLane && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setShowBooking(null)}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => { releaseHold(); setShowBooking(null) }}>
           <div className="bg-card border border-border rounded-xl max-w-lg w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
             {/* Header — sticky */}
             <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
-              <div>
-                <h3 className="text-base font-bold">Rezerwacja toru</h3>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold">Rezerwacja toru</h3>
+                  {holdTimeLeft > 0 && (
+                    <span className={`text-xs font-mono px-2 py-0.5 rounded-full ${
+                      holdTimeLeft <= 30 ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/15 text-amber-400'
+                    }`}>
+                      {Math.floor(holdTimeLeft / 60)}:{(holdTimeLeft % 60).toString().padStart(2, '0')}
+                    </span>
+                  )}
+                </div>
                 <p className="text-xs text-muted">
                   {selectedLane.name} ({selectedLane.length_m}m) · St. {showBooking.stationNumber}
                   {bookingStations > 1 && `–${showBooking.stationNumber + bookingStations - 1}`}
@@ -1061,10 +1196,24 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
                   })()}
                 </p>
               </div>
-              <button onClick={() => setShowBooking(null)} className="p-1.5 rounded-lg hover:bg-background">
+              <button onClick={() => { releaseHold(); setShowBooking(null) }} className="p-1.5 rounded-lg hover:bg-background">
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {/* Extend hold prompt */}
+            {showExtendPrompt && (
+              <div className="mx-5 mt-3 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-center justify-between gap-3">
+                <p className="text-sm text-amber-300">Potrzebujesz więcej czasu?</p>
+                <button
+                  onClick={extendHold}
+                  disabled={holdExtending}
+                  className="px-3 py-1.5 bg-amber-500/20 border border-amber-500/40 text-amber-300 rounded-lg text-sm font-medium hover:bg-amber-500/30 transition-colors disabled:opacity-50"
+                >
+                  {holdExtending ? 'Przedłużam...' : 'Przedłuż o 3 min'}
+                </button>
+              </div>
+            )}
 
             {/* Scrollable content */}
             <div className="overflow-y-auto px-5 py-4 space-y-4 text-sm flex-1">

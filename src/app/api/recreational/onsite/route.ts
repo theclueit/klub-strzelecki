@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
       .eq('id', registrar_id)
       .single()
 
-    if (!registrar || !['admin', 'registrar', 'range_registrar'].includes(registrar.role)) {
+    if (!registrar || !['admin', 'superadmin', 'registrar', 'range_registrar'].includes(registrar.role)) {
       return NextResponse.json({ error: 'Brak uprawnień rejestratora' }, { status: 403 })
     }
 

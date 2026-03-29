@@ -112,16 +112,16 @@ export default function Navigation() {
 
   // Role-based links — flat, na tym samym poziomie co grupy (widoczne tylko dla uprawnionych)
   const roleLinks: NavItem[] = [
-    ...(member?.role === 'judge' || member?.role === 'admin'
+    ...(member?.role === 'judge' || member?.role === 'admin' || member?.role === 'superadmin'
       ? [{ href: '/sedzia', label: 'Sędzia', icon: Crosshair }]
       : []),
-    ...(member?.role === 'instructor' || member?.role === 'admin'
+    ...(member?.role === 'instructor' || member?.role === 'admin' || member?.role === 'superadmin'
       ? [{ href: '/instruktor', label: 'Instruktor', icon: Target }]
       : []),
-    ...(['registrar', 'range_registrar', 'admin'].includes(member?.role || '')
+    ...(['registrar', 'range_registrar', 'admin', 'superadmin'].includes(member?.role || '')
       ? [{ href: '/rejestracja', label: 'Rejestracja', icon: UserPlus }]
       : []),
-    ...(member?.role === 'admin'
+    ...(['admin', 'superadmin'].includes(member?.role || '')
       ? [{ href: '/admin', label: 'Admin', icon: Shield }]
       : []),
   ]
