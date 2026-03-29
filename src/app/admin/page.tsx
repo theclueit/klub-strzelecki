@@ -1568,7 +1568,7 @@ export default function AdminPage() {
         .not('start_number', 'is', null)
         .order('start_number', { ascending: false })
         .limit(1)
-        .single()
+        .maybeSingle()
       const nextStartNumber = ((maxNumData as any)?.start_number ?? 0) + 1
 
       const { data: newReg, error: regErr } = await supabase
