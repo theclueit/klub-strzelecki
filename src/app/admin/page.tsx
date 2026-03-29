@@ -180,6 +180,7 @@ export default function AdminPage() {
   // Results with targets preview
   const [resultsPreview, setResultsPreview] = useState<{ eventId: string; eventTitle: string; results: any[] } | null>(null)
   const [resultsLightbox, setResultsLightbox] = useState<string | null>(null)
+  const [memberTargetMap, setMemberTargetMap] = useState<Set<string>>(new Set())
 
   // Inventory
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([])
@@ -340,6 +341,14 @@ export default function AdminPage() {
     setEventSlots((slotsRes.data ?? []) as EventDisciplineSlot[])
     setInventoryItems((invRes.data ?? []) as InventoryItem[])
     setRegulations((regRes.data ?? []) as Regulation[])
+    // Load which members have target photos
+    const { data: targetsData } = await supabase
+      .from('results')
+      .select('member_id, event_id')
+      .not('target_image_url', 'is', null)
+    const tSet = new Set<string>()
+    for (const t of (targetsData ?? [])) tSet.add(`${t.member_id}:${t.event_id}`)
+    setMemberTargetMap(tSet)
     // Also load shooting lanes, weapons, packages (needed for event lane blocking & range management)
     loadShootingLanes()
     loadShootingPackages()
@@ -3909,13 +3918,15 @@ export default function AdminPage() {
                                 >
                                   <Printer className="w-3 h-3" />
                                 </button>
+                                {memberTargetMap.has(`${(r.member as any)?.id}:${ev.id}`) && (
                                 <button
                                   onClick={() => viewMemberTargets((r.member as any)?.id, ev.id, (r.member as any)?.full_name ?? '?')}
-                                  className="flex items-center gap-1 text-xs px-2 py-1.5 border border-border rounded-lg hover:border-blue-400 hover:text-blue-400 transition-colors"
+                                  className="flex items-center gap-1 text-xs px-2 py-1.5 border border-blue-400/30 text-blue-400 rounded-lg hover:border-blue-400 hover:bg-blue-400/10 transition-colors"
                                   title="Podgląd tarcz"
                                 >
                                   <Camera className="w-3 h-3" />
                                 </button>
+                                )}
                               </div>
                             </td>
                           </tr>
