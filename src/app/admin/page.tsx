@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
-import { Shield, Calendar, Target, Users, Plus, Trash2, Pencil, Save, X, UserPlus, ChevronDown, ChevronUp, ClipboardList, Check, Ban, Tag, Clock, Printer, MapPin, Zap, Package, AlertTriangle, DollarSign, Eye, Crosshair, Boxes, Wrench, CircleDot, Bell, Mail, Trophy, Hash, History, ArrowDownUp } from 'lucide-react'
+import { Shield, Calendar, Target, Users, Plus, Trash2, Pencil, Save, X, UserPlus, ChevronDown, ChevronUp, ClipboardList, Check, Ban, Tag, Clock, Printer, MapPin, Zap, Package, AlertTriangle, DollarSign, Eye, Crosshair, Boxes, Wrench, CircleDot, Bell, Mail, Trophy, Hash, History, ArrowDownUp, Camera } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import type { Discipline, Member, EventDiscipline, EventDisciplineSlot } from '@/types/database'
 
@@ -176,6 +176,10 @@ export default function AdminPage() {
   const [newSlotForm, setNewSlotForm] = useState<{ event_discipline_id: string; start_time: string; end_time: string; max_participants: string }>({
     event_discipline_id: '', start_time: '', end_time: '', max_participants: '10',
   })
+
+  // Results with targets preview
+  const [resultsPreview, setResultsPreview] = useState<{ eventId: string; eventTitle: string; results: any[] } | null>(null)
+  const [resultsLightbox, setResultsLightbox] = useState<string | null>(null)
 
   // Inventory
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([])
@@ -993,25 +997,25 @@ export default function AdminPage() {
     const displayCount = Math.min(discShotsCount, 60) <= 10 ? Math.min(discShotsCount, 60) : 10
 
     let html = `<!DOCTYPE html><html><head><title>Metryczka - ${memberName}</title><style>
-      @page { size: 80mm auto; margin: 2mm 4mm; }
+      @page { size: 85mm 110mm; margin: 2mm 3mm; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: Arial, sans-serif; font-size: 12px; color: #000; width: 72mm; }
-      .header { text-align: center; margin-bottom: 3mm; }
-      .club-name { font-size: 16px; font-weight: bold; }
-      .club-short { font-size: 24px; font-weight: 900; margin: 1mm 0; }
-      .event-name { font-size: 10px; margin-bottom: 1mm; }
-      .field { font-size: 11px; margin: 1mm 0; }
-      .field-label { font-size: 10px; }
-      .field-value { font-weight: bold; font-size: 13px; }
-      .field-value-large { font-weight: 900; font-size: 16px; }
-      .dotted { border-bottom: 1px dotted #000; min-height: 5mm; margin: 2mm 0; }
-      .sig-section { margin-top: 4mm; }
-      .sig-label { font-size: 10px; margin-top: 1mm; }
-      .sig-line { border-bottom: 1px dotted #000; height: 8mm; margin-bottom: 1mm; }
-      .score-grid { border-collapse: collapse; margin: 2mm auto; }
-      .score-grid td { border: 1px solid #000; width: 10mm; height: 8mm; text-align: center; }
-      .penalty-row { display: flex; justify-content: space-between; align-items: flex-start; margin: 2mm 0; }
-      .penalty-box { border: 1px solid #000; min-width: 15mm; min-height: 7mm; display: inline-block; }
+      body { font-family: Arial, sans-serif; font-size: 12px; color: #000; width: 79mm; }
+      .header { text-align: center; margin-bottom: 2mm; }
+      .club-name { font-size: 14px; font-weight: bold; }
+      .club-short { font-size: 20px; font-weight: 900; margin: 1mm 0; }
+      .event-name { font-size: 9px; margin-bottom: 1mm; }
+      .field { font-size: 10px; margin: 1mm 0; }
+      .field-label { font-size: 9px; }
+      .field-value { font-weight: bold; font-size: 12px; }
+      .field-value-large { font-weight: 900; font-size: 14px; }
+      .dotted { border-bottom: 1px dotted #000; min-height: 4mm; margin: 1mm 0; }
+      .sig-section { margin-top: 2mm; }
+      .sig-label { font-size: 9px; margin-top: 1mm; }
+      .sig-line { border-bottom: 1px dotted #000; height: 6mm; margin-bottom: 1mm; }
+      .score-grid { border-collapse: collapse; margin: 1mm auto; }
+      .score-grid td { border: 1px solid #000; width: 10mm; height: 7mm; text-align: center; }
+      .penalty-row { display: flex; justify-content: space-between; align-items: flex-start; margin: 1mm 0; }
+      .penalty-box { border: 1px solid #000; min-width: 15mm; min-height: 6mm; display: inline-block; }
     </style></head><body>`
 
     html += `<div class="header"><div class="club-name">Klub Strzelecki</div><div class="club-short">CEL</div></div>`
@@ -1075,27 +1079,27 @@ export default function AdminPage() {
 
     // Build multi-page metryczki
     let html = `<!DOCTYPE html><html><head><title>Metryczki - ${reg.memberName}</title><style>
-      @page { size: 80mm auto; margin: 2mm 4mm; }
+      @page { size: 85mm 110mm; margin: 2mm 3mm; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: Arial, sans-serif; font-size: 12px; color: #000; width: 72mm; }
-      .metryczka { width: 72mm; padding: 3mm 0; page-break-after: always; }
+      body { font-family: Arial, sans-serif; font-size: 12px; color: #000; width: 79mm; }
+      .metryczka { width: 79mm; padding: 2mm 0; page-break-after: always; }
       .metryczka:last-child { page-break-after: auto; }
-      .header { text-align: center; margin-bottom: 3mm; }
-      .club-name { font-size: 16px; font-weight: bold; }
-      .club-short { font-size: 24px; font-weight: 900; margin: 1mm 0; }
-      .event-name { font-size: 10px; margin-bottom: 1mm; }
-      .field { font-size: 11px; margin: 1mm 0; }
-      .field-label { font-size: 10px; }
-      .field-value { font-weight: bold; font-size: 13px; }
-      .field-value-large { font-weight: 900; font-size: 16px; }
-      .dotted { border-bottom: 1px dotted #000; min-height: 5mm; margin: 2mm 0; }
-      .sig-section { margin-top: 4mm; }
-      .sig-label { font-size: 10px; margin-top: 1mm; }
-      .sig-line { border-bottom: 1px dotted #000; height: 8mm; margin-bottom: 1mm; }
-      .score-grid { border-collapse: collapse; margin: 2mm auto; }
-      .score-grid td { border: 1px solid #000; width: 10mm; height: 8mm; text-align: center; }
-      .penalty-row { display: flex; justify-content: space-between; align-items: flex-start; margin: 2mm 0; }
-      .penalty-box { border: 1px solid #000; min-width: 15mm; min-height: 7mm; display: inline-block; }
+      .header { text-align: center; margin-bottom: 2mm; }
+      .club-name { font-size: 14px; font-weight: bold; }
+      .club-short { font-size: 20px; font-weight: 900; margin: 1mm 0; }
+      .event-name { font-size: 9px; margin-bottom: 1mm; }
+      .field { font-size: 10px; margin: 1mm 0; }
+      .field-label { font-size: 9px; }
+      .field-value { font-weight: bold; font-size: 12px; }
+      .field-value-large { font-weight: 900; font-size: 14px; }
+      .dotted { border-bottom: 1px dotted #000; min-height: 4mm; margin: 1mm 0; }
+      .sig-section { margin-top: 2mm; }
+      .sig-label { font-size: 9px; margin-top: 1mm; }
+      .sig-line { border-bottom: 1px dotted #000; height: 6mm; margin-bottom: 1mm; }
+      .score-grid { border-collapse: collapse; margin: 1mm auto; }
+      .score-grid td { border: 1px solid #000; width: 10mm; height: 7mm; text-align: center; }
+      .penalty-row { display: flex; justify-content: space-between; align-items: flex-start; margin: 1mm 0; }
+      .penalty-box { border: 1px solid #000; min-width: 15mm; min-height: 6mm; display: inline-block; }
     </style></head><body>`
 
     const parts = reg.memberName.trim().split(/\s+/)
@@ -1979,7 +1983,19 @@ export default function AdminPage() {
     }
   }
 
-  // ---- PRINT METRYCZKI (thermal printer TSP700 II, 80mm) ----
+  // ---- VIEW EVENT RESULTS WITH TARGETS ----
+  async function viewEventResults(eventId: string) {
+    const ev = events.find(e => e.id === eventId)
+    if (!ev) return
+    const { data } = await supabase
+      .from('results')
+      .select('id, total_score, max_score, tens_count, misses, time_seconds, target_image_url, shot_at, member:members!results_member_id_fkey(id, full_name), discipline:disciplines(name, scoring_type)')
+      .eq('event_id', eventId)
+      .order('shot_at', { ascending: false })
+    setResultsPreview({ eventId, eventTitle: ev.title, results: data ?? [] })
+  }
+
+  // ---- PRINT METRYCZKI (thermal printer TSP700 II, 85x110mm) ----
   async function printMetryczki(eventId: string) {
     const ev = events.find(e => e.id === eventId)
     if (!ev) return
@@ -2033,33 +2049,33 @@ export default function AdminPage() {
       return { firstName, lastName }
     }
 
-    // Build metryczki HTML for thermal printer (80mm paper, ~72mm printable)
+    // Build metryczki HTML for thermal printer (85mm x 110mm paper)
     let html = `<!DOCTYPE html><html><head><title>Metryczki - ${ev.title}</title><style>
-      @page { size: 80mm auto; margin: 2mm 4mm; }
+      @page { size: 85mm 110mm; margin: 2mm 3mm; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: 'Arial', sans-serif; font-size: 12px; color: #000; width: 72mm; }
+      body { font-family: 'Arial', sans-serif; font-size: 12px; color: #000; width: 79mm; }
       .metryczka {
-        width: 72mm; padding: 3mm 0;
+        width: 79mm; padding: 2mm 0;
         page-break-after: always;
       }
       .metryczka:last-child { page-break-after: auto; }
-      .header { text-align: center; margin-bottom: 3mm; }
-      .club-name { font-size: 16px; font-weight: bold; }
-      .club-short { font-size: 24px; font-weight: 900; margin: 1mm 0; }
-      .event-name { font-size: 10px; margin-bottom: 1mm; }
-      .field { font-size: 11px; margin: 1mm 0; }
-      .field-label { font-size: 10px; }
-      .field-value { font-weight: bold; font-size: 13px; }
-      .field-value-large { font-weight: 900; font-size: 16px; }
-      .dotted { border-bottom: 1px dotted #000; min-height: 5mm; margin: 2mm 0; }
+      .header { text-align: center; margin-bottom: 2mm; }
+      .club-name { font-size: 14px; font-weight: bold; }
+      .club-short { font-size: 20px; font-weight: 900; margin: 1mm 0; }
+      .event-name { font-size: 9px; margin-bottom: 1mm; }
+      .field { font-size: 10px; margin: 1mm 0; }
+      .field-label { font-size: 9px; }
+      .field-value { font-weight: bold; font-size: 12px; }
+      .field-value-large { font-weight: 900; font-size: 14px; }
+      .dotted { border-bottom: 1px dotted #000; min-height: 4mm; margin: 1mm 0; }
       .dotted-short { border-bottom: 1px dotted #000; display: inline-block; min-width: 25mm; min-height: 4mm; }
-      .sig-section { margin-top: 4mm; }
-      .sig-label { font-size: 10px; margin-top: 1mm; }
-      .sig-line { border-bottom: 1px dotted #000; height: 8mm; margin-bottom: 1mm; }
-      .score-grid { border-collapse: collapse; margin: 2mm auto; }
-      .score-grid td { border: 1px solid #000; width: 10mm; height: 8mm; text-align: center; font-size: 11px; }
-      .penalty-row { display: flex; justify-content: space-between; align-items: flex-start; margin: 2mm 0; }
-      .penalty-box { border: 1px solid #000; min-width: 15mm; min-height: 7mm; display: inline-block; text-align: center; }
+      .sig-section { margin-top: 2mm; }
+      .sig-label { font-size: 9px; margin-top: 1mm; }
+      .sig-line { border-bottom: 1px dotted #000; height: 6mm; margin-bottom: 1mm; }
+      .score-grid { border-collapse: collapse; margin: 1mm auto; }
+      .score-grid td { border: 1px solid #000; width: 10mm; height: 7mm; text-align: center; font-size: 10px; }
+      .penalty-row { display: flex; justify-content: space-between; align-items: flex-start; margin: 1mm 0; }
+      .penalty-box { border: 1px solid #000; min-width: 15mm; min-height: 6mm; display: inline-block; text-align: center; }
       .catering-title { font-size: 28px; font-weight: 900; text-align: center; margin: 4mm 0; }
       .separator { border-top: 1px dashed #aaa; margin: 2mm 0; }
       @media print {
@@ -2422,6 +2438,15 @@ export default function AdminPage() {
                           title="Wyślij przypomnienie email"
                         >
                           <Bell className="w-4 h-4" />
+                        </button>
+                      )}
+                      {getEventTotalRegs(ev.id) > 0 && (
+                        <button
+                          onClick={() => viewEventResults(ev.id)}
+                          className="p-2 text-muted hover:text-blue-400 rounded-lg hover:bg-card-hover"
+                          title="Podgląd wyników z tarczami"
+                        >
+                          <Camera className="w-4 h-4" />
                         </button>
                       )}
                       {getEventTotalRegs(ev.id) > 0 && (
@@ -3774,6 +3799,14 @@ export default function AdminPage() {
                   >
                     <Printer className="w-3.5 h-3.5" />
                     Lista do podpisu
+                  </button>
+                  <button
+                    onClick={() => viewEventResults(ev.id)}
+                    className="flex items-center gap-1 text-xs px-2.5 py-1 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 rounded-lg transition-colors font-medium"
+                    title="Podgląd wyników i tarcz"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    Wyniki / Tarcze
                   </button>
                 </h3>
 
@@ -5326,6 +5359,102 @@ export default function AdminPage() {
               )}
             </div>
           )}
+        </div>
+      )}
+      {/* Results with targets modal */}
+      {resultsPreview && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-start justify-center p-4 pt-12 overflow-y-auto" onClick={() => { setResultsPreview(null); setResultsLightbox(null) }}>
+          <div className="bg-card border border-border rounded-xl w-full max-w-4xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <h2 className="font-semibold text-lg">Wyniki — {resultsPreview.eventTitle}</h2>
+              <button onClick={() => { setResultsPreview(null); setResultsLightbox(null) }} className="p-1 hover:bg-card-hover rounded"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-6">
+              {resultsPreview.results.length === 0 ? (
+                <p className="text-muted text-center py-8">Brak wyników dla tego wydarzenia</p>
+              ) : (
+                (() => {
+                  const byDisc: Record<string, typeof resultsPreview.results> = {}
+                  for (const r of resultsPreview.results) {
+                    const dn = r.discipline?.name ?? 'Bez dyscypliny'
+                    if (!byDisc[dn]) byDisc[dn] = []
+                    byDisc[dn].push(r)
+                  }
+                  return Object.entries(byDisc).map(([discName, dResults]) => {
+                    const isShotgun = dResults[0]?.discipline?.scoring_type === 'shotgun'
+                    const sorted = [...dResults].sort((a, b) => isShotgun ? a.total_score - b.total_score : b.total_score - a.total_score)
+                    return (
+                      <div key={discName} className="mb-6">
+                        <h3 className="text-sm font-semibold text-blue-400 mb-2">{discName}</h3>
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border/30 text-xs text-muted">
+                              <th className="text-left px-3 py-2 w-10">#</th>
+                              <th className="text-left px-3 py-2">Zawodnik</th>
+                              {isShotgun ? (
+                                <>
+                                  <th className="text-right px-3 py-2">Czas</th>
+                                  <th className="text-right px-3 py-2">Pudła</th>
+                                  <th className="text-right px-3 py-2">Wynik</th>
+                                </>
+                              ) : (
+                                <>
+                                  <th className="text-right px-3 py-2">Wynik</th>
+                                  <th className="text-right px-3 py-2">10-tki</th>
+                                  <th className="text-right px-3 py-2">Pudła</th>
+                                </>
+                              )}
+                              <th className="text-center px-3 py-2 w-20">Tarcza</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sorted.map((r: any, idx: number) => (
+                              <tr key={r.id} className="border-b border-border/20 hover:bg-card-hover">
+                                <td className="px-3 py-2">{idx < 3 ? ['🥇','🥈','🥉'][idx] : idx + 1}</td>
+                                <td className="px-3 py-2 font-medium">{r.member?.full_name ?? '?'}</td>
+                                {isShotgun ? (
+                                  <>
+                                    <td className="px-3 py-2 text-right font-mono text-muted">{r.time_seconds ? `${Number(r.time_seconds).toFixed(2)}s` : '-'}</td>
+                                    <td className="px-3 py-2 text-right text-muted">{r.misses ? <span className="text-danger">{r.misses}</span> : '0'}</td>
+                                    <td className="px-3 py-2 text-right font-mono font-bold">{Number(r.total_score).toFixed(2)}s</td>
+                                  </>
+                                ) : (
+                                  <>
+                                    <td className="px-3 py-2 text-right font-mono font-bold">{r.total_score}{r.max_score && <span className="text-xs text-muted">/{r.max_score}</span>}</td>
+                                    <td className="px-3 py-2 text-right text-muted">{r.tens_count ?? '-'}</td>
+                                    <td className="px-3 py-2 text-right text-muted">{r.misses ?? '-'}</td>
+                                  </>
+                                )}
+                                <td className="px-3 py-2 text-center">
+                                  {r.target_image_url ? (
+                                    <button onClick={() => setResultsLightbox(r.target_image_url)} className="hover:opacity-80 transition-opacity" title="Podgląd tarczy">
+                                      <img src={r.target_image_url} alt="Tarcza" className="w-10 h-10 object-cover rounded border border-border inline-block" />
+                                    </button>
+                                  ) : (
+                                    <Camera className="w-4 h-4 text-muted/30 mx-auto" />
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )
+                  })
+                })()
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Results target lightbox */}
+      {resultsLightbox && (
+        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4" onClick={() => setResultsLightbox(null)}>
+          <div className="relative max-w-2xl max-h-[90vh]">
+            <button onClick={() => setResultsLightbox(null)} className="absolute -top-10 right-0 text-white hover:text-primary transition-colors"><X className="w-8 h-8" /></button>
+            <img src={resultsLightbox} alt="Tarcza — powiększenie" className="max-w-full max-h-[85vh] rounded-lg object-contain" />
+          </div>
         </div>
       )}
     </div>

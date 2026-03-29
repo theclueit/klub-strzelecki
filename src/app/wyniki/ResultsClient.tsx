@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Trophy, Search, X, Printer } from 'lucide-react'
+import { Trophy, Search, X, Printer, Camera } from 'lucide-react'
 import Link from 'next/link'
 
 interface ResultRow {
@@ -12,6 +12,7 @@ interface ResultRow {
   misses: number | null
   time_seconds: number | null
   shot_at: string
+  target_image_url?: string | null
   member?: { id: string; full_name: string; class: string; license_number: string | null; club_name: string | null }
   event?: { id: string; title: string; start_date: string; event_type: string }
   discipline?: { name: string; scoring_type: string | null }
@@ -19,6 +20,7 @@ interface ResultRow {
 
 export default function ResultsClient({ results }: { results: ResultRow[] }) {
   const [search, setSearch] = useState('')
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
 
   const medals = ['🥇', '🥈', '🥉']
   const classColors: Record<string, string> = {
@@ -322,6 +324,7 @@ export default function ResultsClient({ results }: { results: ResultRow[] }) {
                                 <th className="text-right px-6 py-2">Pudła</th>
                               </>
                             )}
+                            <th className="text-center px-3 py-2 w-16">Tarcza</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -367,6 +370,15 @@ export default function ResultsClient({ results }: { results: ResultRow[] }) {
                                     <td className="px-6 py-2.5 text-right text-muted">{r.misses ?? '-'}</td>
                                   </>
                                 )}
+                                <td className="px-3 py-2.5 text-center">
+                                  {r.target_image_url ? (
+                                    <button onClick={() => setLightboxUrl(r.target_image_url!)} className="inline-block hover:opacity-80 transition-opacity" title="Podgląd tarczy">
+                                      <img src={r.target_image_url} alt="Tarcza" className="w-10 h-10 object-cover rounded border border-border" />
+                                    </button>
+                                  ) : (
+                                    <span className="text-muted/30"><Camera className="w-4 h-4 mx-auto" /></span>
+                                  )}
+                                </td>
                               </tr>
                             )
                           })}
@@ -378,6 +390,17 @@ export default function ResultsClient({ results }: { results: ResultRow[] }) {
               </div>
             )
           })}
+        </div>
+      )}
+      {/* Lightbox */}
+      {lightboxUrl && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setLightboxUrl(null)}>
+          <div className="relative max-w-2xl max-h-[90vh]">
+            <button onClick={() => setLightboxUrl(null)} className="absolute -top-10 right-0 text-white hover:text-primary transition-colors">
+              <X className="w-8 h-8" />
+            </button>
+            <img src={lightboxUrl} alt="Tarcza — powiększenie" className="max-w-full max-h-[85vh] rounded-lg object-contain" />
+          </div>
         </div>
       )}
     </div>

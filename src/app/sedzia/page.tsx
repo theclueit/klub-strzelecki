@@ -285,6 +285,7 @@ export default function JudgePage() {
 
   function updateShot(index: number, value: string) {
     // Allow empty, 0-10, or decimal 0.0-10.9
+    value = value.replace(',', '.')
     const num = parseFloat(value)
     if (value !== '' && (isNaN(num) || num < 0 || num > 10.9)) return
     setShots(prev => {
@@ -952,7 +953,7 @@ export default function JudgePage() {
                   type="text"
                   inputMode="decimal"
                   value={timeSeconds}
-                  onChange={e => setTimeSeconds(e.target.value)}
+                  onChange={e => setTimeSeconds(e.target.value.replace(',', '.'))}
                   placeholder="np. 4.32"
                   className="w-full bg-background border border-border rounded-lg px-4 py-3 text-2xl text-center font-mono focus:outline-none focus:border-primary"
                 />
@@ -1232,7 +1233,7 @@ export default function JudgePage() {
                     </div>
                     <div className="mt-2 pt-2 border-t border-border flex items-center justify-between">
                       <label className="text-xs text-muted">X-ki (środek):</label>
-                      <input type="number" min="0" value={xsCount} onChange={e => setXsCount(e.target.value)} placeholder="0" className="w-20 bg-background border border-border rounded px-2 py-1 text-sm text-center focus:outline-none focus:border-primary" />
+                      <input type="text" inputMode="numeric" value={xsCount} onChange={e => setXsCount(e.target.value.replace(/[^0-9]/g, ''))} placeholder="0" className="w-20 bg-background border border-border rounded px-2 py-1 text-sm text-center focus:outline-none focus:border-primary" />
                     </div>
                   </div>
                 )}
@@ -1245,16 +1246,16 @@ export default function JudgePage() {
                 <div className="flex items-center gap-3">
                   <div className="flex-1">
                     <label className="text-sm text-muted block mb-1">Wynik *</label>
-                    <input type="number" step="any" min="0" value={totalScore} onChange={e => setTotalScore(e.target.value)} placeholder="np. 95" required className={inputClass} />
+                    <input type="text" inputMode="decimal" value={totalScore} onChange={e => setTotalScore(e.target.value.replace(',', '.'))} placeholder="np. 95" required className={inputClass} />
                   </div>
                   <div className="text-2xl text-muted pt-5">/</div>
                   <div className="w-20">
                     <label className="text-sm text-muted block mb-1">Max</label>
                     <input
-                      type="number"
-                      min="0"
+                      type="text"
+                      inputMode="decimal"
                       value={maxScore}
-                      onChange={e => setMaxScore(e.target.value)}
+                      onChange={e => setMaxScore(e.target.value.replace(',', '.'))}
                       placeholder="100"
                       className={inputClass}
                     />
@@ -1264,11 +1265,11 @@ export default function JudgePage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-sm text-muted block mb-1">Dziesiątki (10)</label>
-                    <input type="number" min="0" value={tensCount} onChange={e => setTensCount(e.target.value)} placeholder="0" className={inputSmClass} />
+                    <input type="text" inputMode="numeric" value={tensCount} onChange={e => setTensCount(e.target.value.replace(/[^0-9]/g, ''))} placeholder="0" className={inputSmClass} />
                   </div>
                   <div>
                     <label className="text-sm text-muted block mb-1">X-ki (środek)</label>
-                    <input type="number" min="0" value={xsCount} onChange={e => setXsCount(e.target.value)} placeholder="0" className={inputSmClass} />
+                    <input type="text" inputMode="numeric" value={xsCount} onChange={e => setXsCount(e.target.value.replace(/[^0-9]/g, ''))} placeholder="0" className={inputSmClass} />
                   </div>
                 </div>
               </>
