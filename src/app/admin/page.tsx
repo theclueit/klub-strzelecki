@@ -955,6 +955,11 @@ export default function AdminPage() {
       alert(`${m?.full_name || 'Ten członek'} nie posiada licencji sędziowskiej.\nLicencję sędziowską można dodać w profilu użytkownika.`)
       return
     }
+    // Nie pozwól zdegradować admina/superadmina
+    if (['admin', 'superadmin'].includes(m!.role) && !['admin', 'superadmin'].includes(newRole)) {
+      alert(`Nie można zmienić roli ${m?.full_name} — administrator/superadmin jest chroniony. Zmianę może wykonać tylko bezpośrednio w bazie danych.`)
+      return
+    }
     if (!confirm(`Zmienić rolę ${m?.full_name || ''} na "${newRole}"?`)) return
     await supabase.from('members').update({ role: newRole }).eq('id', m!.id)
     loadAll()
@@ -2996,17 +3001,23 @@ export default function AdminPage() {
                                 {assignedEvents.length === 0 ? '-' : assignedEvents.map(e => e!.title).join(', ')}
                               </td>
                               <td className="px-4 py-2.5">
-                                <select
-                                  value={j.role}
-                                  onChange={(e) => changeRole(j.id, e.target.value)}
-                                  className="bg-background border border-border rounded px-2 py-1 text-xs"
-                                >
-                                  <option value="member">Członek</option>
-                                  <option value="judge">Sędzia</option>
-                                  <option value="registrar">Rejestrator</option>
-                                  <option value="range_registrar">Rej. strzelnica</option>
-                                  <option value="instructor">Instruktor</option>
-                                </select>
+                                {['admin', 'superadmin'].includes(j.role) ? (
+                                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${j.role === 'superadmin' ? 'bg-red-500/20 text-red-400' : 'bg-primary/20 text-primary'}`}>
+                                    {j.role === 'superadmin' ? 'Superadmin' : 'Admin'}
+                                  </span>
+                                ) : (
+                                  <select
+                                    value={j.role}
+                                    onChange={(e) => changeRole(j.id, e.target.value)}
+                                    className="bg-background border border-border rounded px-2 py-1 text-xs"
+                                  >
+                                    <option value="member">Członek</option>
+                                    <option value="judge">Sędzia</option>
+                                    <option value="registrar">Rejestrator</option>
+                                    <option value="range_registrar">Rej. strzelnica</option>
+                                    <option value="instructor">Instruktor</option>
+                                  </select>
+                                )}
                               </td>
                             </tr>
                           )
