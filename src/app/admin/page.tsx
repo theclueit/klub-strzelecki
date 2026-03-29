@@ -1749,6 +1749,218 @@ export default function AdminPage() {
     }
   }
 
+  // ---- PRINT METRYCZKI (thermal printer TSP700 II, 80mm) ----
+  async function printMetryczki(eventId: string) {
+    const ev = events.find(e => e.id === eventId)
+    if (!ev) return
+
+    // Load registrations with members
+    const { data: regs } = await supabase
+      .from('event_registrations')
+      .select('id, member_id, start_number, member:members(full_name, club_name, license_number)')
+      .eq('event_id', eventId)
+      .neq('status', 'cancelled')
+      .order('start_number')
+
+    if (!regs || regs.length === 0) {
+      alert('Brak zawodników do wydruku metryczek')
+      return
+    }
+
+    // Load event disciplines with discipline details
+    const { data: evDiscsData } = await supabase
+      .from('event_disciplines')
+      .select('id, discipline_id, discipline:disciplines(name, scoring_type, shots_count)')
+      .eq('event_id', eventId)
+
+    // Load registration_disciplines to know which athlete is in which discipline
+    const { data: regDiscs } = await supabase
+      .from('registration_disciplines')
+      .select('member_registration_id, event_discipline_id')
+      .in('member_registration_id', regs.map(r => r.id))
+
+    if (!evDiscsData || evDiscsData.length === 0) {
+      alert('Brak dyscyplin w wydarzeniu')
+      return
+    }
+
+    const dateStr = new Date(ev.start_date).toLocaleDateString('pl-PL', { year: 'numeric', month: '2-digit', day: '2-digit' })
+
+    // Extract discipline abbreviation from name like "Pcz — Pistolet centralnego zapłonu 25m" → "Pcz"
+    function discAbbr(name: string): string {
+      const dashIdx = name.indexOf(' — ')
+      if (dashIdx > 0) return name.substring(0, dashIdx).trim()
+      // For names like "Trap", "Skeet" etc.
+      return name.substring(0, Math.min(name.length, 8))
+    }
+
+    // Split full_name into first name + last name
+    function splitName(fullName: string): { firstName: string; lastName: string } {
+      const parts = fullName.trim().split(/\s+/)
+      if (parts.length === 1) return { firstName: parts[0], lastName: '' }
+      const lastName = parts[parts.length - 1]
+      const firstName = parts.slice(0, -1).join(' ')
+      return { firstName, lastName }
+    }
+
+    // Build metryczki HTML for thermal printer (80mm paper, ~72mm printable)
+    let html = `<!DOCTYPE html><html><head><title>Metryczki - ${ev.title}</title><style>
+      @page { size: 80mm auto; margin: 2mm 4mm; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: 'Arial', sans-serif; font-size: 12px; color: #000; width: 72mm; }
+      .metryczka {
+        width: 72mm; padding: 3mm 0;
+        page-break-after: always;
+      }
+      .metryczka:last-child { page-break-after: auto; }
+      .header { text-align: center; margin-bottom: 3mm; }
+      .club-name { font-size: 16px; font-weight: bold; }
+      .club-short { font-size: 24px; font-weight: 900; margin: 1mm 0; }
+      .event-name { font-size: 10px; margin-bottom: 1mm; }
+      .field { font-size: 11px; margin: 1mm 0; }
+      .field-label { font-size: 10px; }
+      .field-value { font-weight: bold; font-size: 13px; }
+      .field-value-large { font-weight: 900; font-size: 16px; }
+      .dotted { border-bottom: 1px dotted #000; min-height: 5mm; margin: 2mm 0; }
+      .dotted-short { border-bottom: 1px dotted #000; display: inline-block; min-width: 25mm; min-height: 4mm; }
+      .sig-section { margin-top: 4mm; }
+      .sig-label { font-size: 10px; margin-top: 1mm; }
+      .sig-line { border-bottom: 1px dotted #000; height: 8mm; margin-bottom: 1mm; }
+      .score-grid { border-collapse: collapse; margin: 2mm auto; }
+      .score-grid td { border: 1px solid #000; width: 10mm; height: 8mm; text-align: center; font-size: 11px; }
+      .penalty-row { display: flex; justify-content: space-between; align-items: flex-start; margin: 2mm 0; }
+      .penalty-box { border: 1px solid #000; min-width: 15mm; min-height: 7mm; display: inline-block; text-align: center; }
+      .catering-title { font-size: 28px; font-weight: 900; text-align: center; margin: 4mm 0; }
+      .separator { border-top: 1px dashed #aaa; margin: 2mm 0; }
+      @media print {
+        body { width: 72mm; }
+        .metryczka { page-break-after: always; }
+        .metryczka:last-child { page-break-after: auto; }
+      }
+    </style></head><body>`
+
+    // Build map of registration_id → discipline ids
+    const regDiscMap = new Map<string, string[]>()
+    for (const rd of (regDiscs ?? [])) {
+      if (!rd.member_registration_id) continue
+      const arr = regDiscMap.get(rd.member_registration_id) || []
+      arr.push(rd.event_discipline_id)
+      regDiscMap.set(rd.member_registration_id, arr)
+    }
+
+    // For each registration, print metryczki per discipline
+    for (const reg of regs as any[]) {
+      const memberName = reg.member?.full_name ?? 'Nieznany'
+      const { firstName, lastName } = splitName(memberName)
+      const startNum = String(reg.start_number ?? 0).padStart(4, '0')
+
+      // Get disciplines for this registration
+      const regDiscIds = regDiscMap.get(reg.id) || []
+      // If no registration_disciplines, print for all event disciplines
+      const applicableDiscs = regDiscIds.length > 0
+        ? (evDiscsData as any[]).filter(ed => regDiscIds.includes(ed.id))
+        : evDiscsData as any[]
+
+      // Filter only actual disciplines (not services)
+      const competitionDiscs = applicableDiscs.filter((ed: any) => {
+        const disc = ed.discipline
+        return disc && disc.scoring_type && disc.scoring_type !== 'service'
+      })
+
+      for (const ed of competitionDiscs) {
+        const disc = (ed as any).discipline
+        const discName = disc?.name ?? 'Dyscyplina'
+        const scoringType = disc?.scoring_type ?? 'points'
+        const shotsCount = disc?.shots_count ?? 10
+        const abbr = discAbbr(discName)
+        // Full discipline name (after " — " or full name)
+        const fullDiscName = discName.includes(' — ') ? discName.split(' — ').slice(1).join(' — ') : discName
+        const metNr = `${abbr}/${startNum}`
+
+        html += `<div class="metryczka">`
+        // Header
+        html += `<div class="header">
+          <div class="club-name">Klub Strzelecki</div>
+          <div class="club-short">CEL</div>
+        </div>`
+        // Event name
+        html += `<div class="event-name">${ev.title}</div>`
+        // Konkurencja
+        html += `<div class="field"><span class="field-label">Konkurencja:</span><br/>${fullDiscName}</div>`
+        // Metryczka nr
+        html += `<div class="field"><span class="field-label">Metryczka nr:</span> <span class="field-value-large">${metNr}</span></div>`
+        // Nazwisko / Imię
+        html += `<div class="field"><span class="field-label">Nazwisko:</span> <span class="field-value">${lastName.toUpperCase()}</span></div>`
+        html += `<div class="field"><span class="field-label">Imię:</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="field-value">${firstName}</span></div>`
+
+        if (scoringType === 'shotgun') {
+          // Time-based metryczka (strzelba / dynamika)
+          html += `<div class="field" style="margin-top:3mm"><span class="field-label">Czas konkurencji:</span></div>`
+          html += `<div class="dotted"></div>`
+          html += `<div class="penalty-row">
+            <div><span class="field-label">Ilość pudeł:</span><br/><div class="penalty-box">&nbsp;</div></div>
+            <div style="text-align:right"><span class="field-label">Kara za 1 pudło:</span><br/><span class="field-value">5 sek.</span></div>
+          </div>`
+          html += `<div class="dotted"></div>`
+        } else {
+          // Score-based metryczka (precyzja / punkty)
+          const evalCount = Math.min(shotsCount, 60)
+          const displayCount = evalCount <= 10 ? evalCount : 10
+          html += `<div class="field" style="margin-top:3mm"><span class="field-label">Ilość strzałów ocenianych:</span> <span class="field-value">${displayCount}</span></div>`
+          html += `<div class="field" style="margin-top:2mm"><span class="field-label">Oceny:</span></div>`
+          // Grid: rows of 5
+          const cols = 5
+          const rows2 = Math.ceil(displayCount / cols)
+          html += `<table class="score-grid">`
+          for (let row = 0; row < rows2; row++) {
+            html += '<tr>'
+            for (let col = 0; col < cols; col++) {
+              const cellNum = row * cols + col + 1
+              if (cellNum <= displayCount) {
+                html += '<td>&nbsp;</td>'
+              }
+            }
+            html += '</tr>'
+          }
+          html += `</table>`
+        }
+
+        // Signatures
+        html += `<div class="sig-section">
+          <div class="sig-line"></div>
+          <div class="sig-label">Podpis zawodnika/zawodniczki:</div>
+        </div>`
+        html += `<div class="sig-section">
+          <div class="sig-line"></div>
+          <div class="sig-label">Podpis sędziego:</div>
+        </div>`
+        html += `</div>` // end metryczka
+      }
+
+      // Catering card for each athlete
+      html += `<div class="metryczka">
+        <div class="header">
+          <div class="club-name">Klub Strzelecki CEL</div>
+          <div class="catering-title">KATERING</div>
+        </div>
+        <div class="event-name">${ev.title}</div>
+        <div class="field">Data zawodów: ${dateStr}</div>
+        <div class="field" style="margin-top:3mm"><span class="field-value">${memberName}</span></div>
+        <div class="field"><span class="field-label">Nr startowy:</span> <span class="field-value">${startNum}</span></div>
+      </div>`
+    }
+
+    html += `</body></html>`
+
+    const printWindow = window.open('', '_blank')
+    if (printWindow) {
+      printWindow.document.write(html)
+      printWindow.document.close()
+      printWindow.focus()
+      setTimeout(() => printWindow.print(), 500)
+    }
+  }
+
   if (loading) return <div className="p-8 text-center text-muted">Ladowanie...</div>
   if (!member || !['admin', 'superadmin'].includes(member.role)) return null
 
@@ -2016,6 +2228,13 @@ export default function AdminPage() {
                             title="Drukuj numery startowe"
                           >
                             <Hash className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => printMetryczki(ev.id)}
+                            className="p-2 text-muted hover:text-primary rounded-lg hover:bg-card-hover"
+                            title="Drukuj metryczki (drukarka termiczna)"
+                          >
+                            <ClipboardList className="w-4 h-4" />
                           </button>
                         </>
                       )}

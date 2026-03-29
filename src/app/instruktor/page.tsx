@@ -178,7 +178,7 @@ export default function InstructorPage() {
   }
 
   if (loading) return <div className="p-8 text-center text-muted">Ładowanie...</div>
-  if (!member || (member.role !== 'instructor' && member.role !== 'admin')) {
+  if (!member || (member.role !== 'instructor' && member.role !== 'admin' && member.role !== 'superadmin')) {
     return (
       <div className="max-w-xl mx-auto px-4 py-16 text-center">
         <Shield className="w-12 h-12 text-muted mx-auto mb-4" />
