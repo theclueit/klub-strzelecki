@@ -267,6 +267,7 @@ export default function AdminPage() {
   const [onsiteSaving, setOnsiteSaving] = useState(false)
   const [onsiteMessage, setOnsiteMessage] = useState('')
   const [onsiteMemberSearch, setOnsiteMemberSearch] = useState('')
+  const [permSearchQuery, setPermSearchQuery] = useState('')
   const [onsiteGuestForm, setOnsiteGuestForm] = useState({
     full_name: '', email: '', phone: '', has_license: false, license_number: '', club_name: '',
   })
@@ -957,6 +958,17 @@ export default function AdminPage() {
     if (!confirm(`Zmienić rolę ${m?.full_name || ''} na "${newRole}"?`)) return
     await supabase.from('members').update({ role: newRole }).eq('id', m!.id)
     loadAll()
+  }
+
+  function filterByPermSearch(members: Member[]): Member[] {
+    if (!permSearchQuery.trim()) return members
+    const q = permSearchQuery.toLowerCase().trim()
+    return members.filter(m =>
+      m.full_name.toLowerCase().includes(q) ||
+      (m.email && m.email.toLowerCase().includes(q)) ||
+      (m.license_number && m.license_number.toLowerCase().includes(q)) ||
+      (m.judge_license_number && m.judge_license_number.toLowerCase().includes(q))
+    )
   }
 
   function getEventJudges(eventId: string) {
@@ -2904,11 +2916,22 @@ export default function AdminPage() {
       {/* ============ JUDGES TAB ============ */}
       {tab === 'judges' && (
         <div>
-          <h2 className="text-lg font-semibold mb-6">Uprawnienia i role ({allMembers.length} członków)</h2>
+          <h2 className="text-lg font-semibold mb-4">Uprawnienia i role ({allMembers.length} członków)</h2>
+
+          {/* Wyszukiwarka */}
+          <div className="mb-6">
+            <input
+              type="text"
+              placeholder="Szukaj po imieniu, nazwisku, emailu lub licencji..."
+              value={permSearchQuery}
+              onChange={e => setPermSearchQuery(e.target.value)}
+              className={inputClass}
+            />
+          </div>
 
           {/* Sekcja: Administratorzy */}
           {(() => {
-            const admins = allMembers.filter(m => m.role === 'admin')
+            const admins = filterByPermSearch(allMembers.filter(m => m.role === 'admin' || m.role === 'superadmin'))
             return admins.length > 0 && (
               <div className="mb-6">
                 <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
@@ -2924,7 +2947,7 @@ export default function AdminPage() {
                           <td className="px-4 py-3 text-muted">{m.email}</td>
                           <td className="px-4 py-3 text-muted">{m.license_number || '-'}</td>
                           <td className="px-4 py-3">
-                            <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-primary/20 text-primary">Admin</span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${m.role === 'superadmin' ? 'bg-red-500/20 text-red-400' : 'bg-primary/20 text-primary'}`}>{m.role === 'superadmin' ? 'Superadmin' : 'Admin'}</span>
                           </td>
                         </tr>
                       ))}
@@ -2937,7 +2960,7 @@ export default function AdminPage() {
 
           {/* Sekcja: Sędziowie */}
           {(() => {
-            const judgesList = allMembers.filter(m => m.role === 'judge' || (m.judge_license_number && ['admin', 'superadmin'].includes(m.role)))
+            const judgesList = filterByPermSearch(allMembers.filter(m => m.role === 'judge' || (m.judge_license_number && ['admin', 'superadmin'].includes(m.role))))
             return (
               <div className="mb-6">
                 <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
@@ -2998,7 +3021,7 @@ export default function AdminPage() {
 
           {/* Sekcja: Rejestratorzy */}
           {(() => {
-            const registrars = allMembers.filter(m => m.role === 'registrar')
+            const registrars = filterByPermSearch(allMembers.filter(m => m.role === 'registrar'))
             return registrars.length > 0 && (
               <div className="mb-6">
                 <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
@@ -3043,7 +3066,7 @@ export default function AdminPage() {
 
           {/* Sekcja: Rejestratorzy strzelnicowi */}
           {(() => {
-            const rangeRegs = allMembers.filter(m => m.role === 'range_registrar')
+            const rangeRegs = filterByPermSearch(allMembers.filter(m => m.role === 'range_registrar'))
             return rangeRegs.length > 0 && (
               <div className="mb-6">
                 <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
@@ -3088,7 +3111,7 @@ export default function AdminPage() {
 
           {/* Sekcja: Instruktorzy */}
           {(() => {
-            const instructors = allMembers.filter(m => m.role === 'instructor')
+            const instructors = filterByPermSearch(allMembers.filter(m => m.role === 'instructor'))
             return instructors.length > 0 && (
               <div className="mb-6">
                 <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
@@ -3160,7 +3183,7 @@ export default function AdminPage() {
 
           {/* Sekcja: Członkowie (bez specjalnych uprawnień) */}
           {(() => {
-            const members = allMembers.filter(m => m.role === 'member')
+            const members = filterByPermSearch(allMembers.filter(m => m.role === 'member'))
             return (
               <div>
                 <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">

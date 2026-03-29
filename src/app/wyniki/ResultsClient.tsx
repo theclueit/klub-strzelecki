@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Trophy, Search, X } from 'lucide-react'
+import { Trophy, Search, X, Printer } from 'lucide-react'
 import Link from 'next/link'
 
 interface ResultRow {
@@ -82,6 +82,137 @@ export default function ResultsClient({ results }: { results: ResultRow[] }) {
   const matchCount = filteredResults.length
   const inputClass = "w-full bg-background border border-border rounded-lg px-4 py-2.5 text-foreground placeholder:text-muted focus:outline-none focus:border-primary text-sm"
 
+  function printEventResults(eventId: string) {
+    const group = sorted.find(g => g.event.id === eventId)
+    if (!group) return
+
+    const ev = group.event
+    const eventDate = new Date(ev.start_date).toLocaleDateString('pl-PL', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    })
+
+    // Group by discipline
+    const byDiscipline: Record<string, ResultRow[]> = {}
+    for (const r of group.results) {
+      const dName = r.discipline?.name ?? 'Inne'
+      if (!byDiscipline[dName]) byDiscipline[dName] = []
+      byDiscipline[dName].push(r)
+    }
+
+    let html = `<!DOCTYPE html><html><head><title>Wyniki - ${ev.title}</title><style>
+      @page { size: A4 portrait; margin: 12mm 15mm; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #000; }
+      .header { text-align: center; margin-bottom: 8mm; padding-bottom: 4mm; border-bottom: 2px solid #000; }
+      .club-name { font-size: 18px; font-weight: bold; }
+      .event-title { font-size: 22px; font-weight: 900; margin: 3mm 0; }
+      .event-meta { font-size: 12px; color: #444; }
+      .discipline-section { margin-top: 6mm; page-break-inside: avoid; }
+      .discipline-name { font-size: 14px; font-weight: bold; background: #f0f0f0; padding: 2mm 3mm; margin-bottom: 2mm; border-left: 3px solid #333; }
+      table { width: 100%; border-collapse: collapse; margin-bottom: 4mm; }
+      th { background: #333; color: #fff; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+      th, td { border: 1px solid #ccc; padding: 2mm 3mm; text-align: left; }
+      td { font-size: 11px; }
+      .pos { width: 8mm; text-align: center; font-weight: bold; }
+      .pos-1 { background: #ffd700; }
+      .pos-2 { background: #e0e0e0; }
+      .pos-3 { background: #deb887; }
+      .score { text-align: right; font-weight: bold; font-size: 13px; font-family: monospace; }
+      .num-right { text-align: right; }
+      .club { font-size: 10px; color: #555; }
+      .license { font-size: 9px; color: #888; }
+      .class-badge { font-size: 9px; padding: 1px 4px; border-radius: 3px; font-weight: bold; }
+      .class-M { background: #e3f2fd; color: #1565c0; }
+      .class-I { background: #e8f5e9; color: #2e7d32; }
+      .class-II { background: #fff3e0; color: #ef6c00; }
+      .class-III { background: #f5f5f5; color: #666; }
+      .footer { margin-top: 8mm; font-size: 10px; color: #666; text-align: center; border-top: 1px solid #ccc; padding-top: 3mm; }
+      .sig-area { margin-top: 15mm; display: flex; justify-content: space-between; }
+      .sig-line { border-top: 1px solid #000; width: 60mm; padding-top: 2mm; font-size: 10px; text-align: center; }
+      @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+    </style></head><body>`
+
+    // Header
+    html += `<div class="header">
+      <div class="club-name">Klub Strzelecki CEL</div>
+      <div class="event-title">${ev.title}</div>
+      <div class="event-meta">${eventDate} · ${typeLabels[ev.event_type] ?? 'Inne'}</div>
+      <div class="event-meta">${group.results.length} zawodników · ${Object.keys(byDiscipline).length} dyscyplin</div>
+    </div>`
+
+    // Per discipline
+    for (const [discName, discResults] of Object.entries(byDiscipline)) {
+      const isShotgun = discResults[0]?.discipline?.scoring_type === 'shotgun'
+      const fullKey = `${ev.id}:${discName}`
+      const fullRanking = fullByEventDiscipline[fullKey] ?? []
+
+      html += `<div class="discipline-section">
+        <div class="discipline-name">${discName}</div>
+        <table>
+          <thead><tr>
+            <th class="pos">#</th>
+            <th>Zawodnik</th>
+            <th>Klub</th>
+            <th>Klasa</th>`
+
+      if (isShotgun) {
+        html += `<th class="num-right">Czas</th><th class="num-right">Pudła</th><th class="num-right">Wynik</th>`
+      } else {
+        html += `<th class="num-right">Wynik</th><th class="num-right">10-tki</th><th class="num-right">Pudła</th>`
+      }
+      html += `</tr></thead><tbody>`
+
+      for (const r of discResults) {
+        const pos = fullRanking.findIndex(fr => fr.id === r.id)
+        const posClass = pos === 0 ? 'pos-1' : pos === 1 ? 'pos-2' : pos === 2 ? 'pos-3' : ''
+        const memberClass = r.member?.class ?? ''
+        const classMap: Record<string, string> = { 'Mistrz': 'M', 'I': 'I', 'II': 'II', 'III': 'III' }
+
+        html += `<tr>
+          <td class="pos ${posClass}">${pos + 1}</td>
+          <td><strong>${r.member?.full_name ?? '?'}</strong><br/><span class="license">${r.member?.license_number ?? ''}</span></td>
+          <td class="club">${r.member?.club_name ?? '-'}</td>
+          <td><span class="class-badge class-${classMap[memberClass] ?? ''}">${memberClass}</span></td>`
+
+        if (isShotgun) {
+          const time = r.time_seconds ? Number(r.time_seconds).toFixed(2) + 's' : '-'
+          const misses = r.misses ?? 0
+          html += `<td class="num-right">${time}</td>
+            <td class="num-right">${misses > 0 ? misses + ' (+' + misses * 5 + 's)' : '0'}</td>
+            <td class="score">${Number(r.total_score).toFixed(2)}s</td>`
+        } else {
+          html += `<td class="score">${r.total_score}${r.max_score ? '/' + r.max_score : ''}</td>
+            <td class="num-right">${r.tens_count ?? '-'}</td>
+            <td class="num-right">${r.misses ?? '-'}</td>`
+        }
+        html += `</tr>`
+      }
+      html += `</tbody></table></div>`
+    }
+
+    // Signatures
+    html += `<div class="sig-area">
+      <div class="sig-line">Sędzia główny</div>
+      <div class="sig-line">Kierownik strzelnicy</div>
+    </div>`
+
+    // Footer
+    html += `<div class="footer">
+      Wygenerowano: ${new Date().toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+      · Klub Strzelecki CEL
+    </div>`
+
+    html += `</body></html>`
+
+    const printWindow = window.open('', '_blank')
+    if (printWindow) {
+      printWindow.document.write(html)
+      printWindow.document.close()
+      printWindow.focus()
+      setTimeout(() => printWindow.print(), 300)
+    }
+  }
+
   return (
     <div className="max-w-5xl mx-auto px-4 py-12">
       <div className="flex items-center gap-3 mb-6">
@@ -142,7 +273,17 @@ export default function ResultsClient({ results }: { results: ResultRow[] }) {
                     </span>
                     <span className="text-xs text-muted">{eventDate}</span>
                   </div>
-                  <h2 className="text-xl font-bold">{ev.title}</h2>
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-xl font-bold">{ev.title}</h2>
+                    <button
+                      onClick={() => printEventResults(ev.id)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-card-hover hover:border-primary hover:text-primary transition-colors"
+                      title="Drukuj / zapisz PDF"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      Drukuj wyniki
+                    </button>
+                  </div>
                   <p className="text-sm text-muted mt-1">
                     {group.results.length} {group.results.length === 1 ? 'wynik' : group.results.length < 5 ? 'wyniki' : 'wyników'}
                     {' · '}{Object.keys(byDiscipline).length} {Object.keys(byDiscipline).length === 1 ? 'dyscyplina' : 'dyscyplin'}

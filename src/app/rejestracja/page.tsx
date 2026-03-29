@@ -187,11 +187,11 @@ export default function RegistrarPage() {
   }, [supabase])
 
   useEffect(() => {
-    if (member && ['registrar', 'range_registrar', 'admin'].includes(member.role)) loadData()
+    if (member && ['registrar', 'range_registrar', 'admin', 'superadmin'].includes(member.role)) loadData()
   }, [member, loadData])
 
   if (loading) return <div className="p-16 text-center text-muted">Ładowanie...</div>
-  if (!member || !['registrar', 'range_registrar', 'admin'].includes(member.role)) {
+  if (!member || !['registrar', 'range_registrar', 'admin', 'superadmin'].includes(member.role)) {
     return (
       <div className="max-w-md mx-auto px-4 py-16 text-center">
         <div className="bg-card border border-border rounded-xl p-8">
