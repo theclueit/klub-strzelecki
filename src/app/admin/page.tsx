@@ -1612,8 +1612,8 @@ export default function AdminPage() {
     setOnsiteDisciplineId('')
     setOnsiteSlotId('')
     setOnsiteMemberSearch('')
+    await loadAll()
     setOnsiteSaving(false)
-    loadAll()
   }
 
   async function quickRegisterGuestOnsite() {
@@ -1689,8 +1689,8 @@ export default function AdminPage() {
     setOnsiteGuestForm({ full_name: '', email: '', phone: '', has_license: false, license_number: '', club_name: '' })
     setOnsiteDisciplineId('')
     setOnsiteSlotId('')
+    await loadAll()
     setOnsiteSaving(false)
-    loadAll()
   }
 
   // ---- ATTENDANCE / SIGN-IN SHEET (Lista do podpisu na strzelnicy) ----
