@@ -997,7 +997,7 @@ export default function AdminPage() {
     const displayCount = Math.min(discShotsCount, 60) <= 10 ? Math.min(discShotsCount, 60) : 10
 
     let html = `<!DOCTYPE html><html><head><title>Metryczka - ${memberName}</title><style>
-      @page { size: 85mm 110mm; margin: 2mm 3mm; }
+      @page { size: 85mm auto; margin: 2mm 3mm; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { font-family: Arial, sans-serif; font-size: 12px; color: #000; width: 79mm; }
       .header { text-align: center; margin-bottom: 2mm; }
@@ -1077,13 +1077,13 @@ export default function AdminPage() {
       return
     }
 
-    // Build multi-page metryczki
+    // Build continuous metryczki (no page breaks — save paper)
     let html = `<!DOCTYPE html><html><head><title>Metryczki - ${reg.memberName}</title><style>
-      @page { size: 85mm 110mm; margin: 2mm 3mm; }
+      @page { size: 85mm auto; margin: 2mm 3mm; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { font-family: Arial, sans-serif; font-size: 12px; color: #000; width: 79mm; }
-      .metryczka { width: 79mm; padding: 2mm 0; page-break-after: always; }
-      .metryczka:last-child { page-break-after: auto; }
+      .metryczka { width: 79mm; padding: 2mm 0; }
+      .metryczka + .metryczka { border-top: 1px dashed #000; margin-top: 3mm; padding-top: 3mm; }
       .header { text-align: center; margin-bottom: 2mm; }
       .club-name { font-size: 14px; font-weight: bold; }
       .club-short { font-size: 20px; font-weight: 900; margin: 1mm 0; }
@@ -2049,16 +2049,15 @@ export default function AdminPage() {
       return { firstName, lastName }
     }
 
-    // Build metryczki HTML for thermal printer (85mm x 110mm paper)
+    // Build metryczki HTML for thermal printer (85mm continuous paper)
     let html = `<!DOCTYPE html><html><head><title>Metryczki - ${ev.title}</title><style>
-      @page { size: 85mm 110mm; margin: 2mm 3mm; }
+      @page { size: 85mm auto; margin: 2mm 3mm; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { font-family: 'Arial', sans-serif; font-size: 12px; color: #000; width: 79mm; }
       .metryczka {
         width: 79mm; padding: 2mm 0;
-        page-break-after: always;
       }
-      .metryczka:last-child { page-break-after: auto; }
+      .metryczka + .metryczka { border-top: 1px dashed #000; margin-top: 3mm; padding-top: 3mm; }
       .header { text-align: center; margin-bottom: 2mm; }
       .club-name { font-size: 14px; font-weight: bold; }
       .club-short { font-size: 20px; font-weight: 900; margin: 1mm 0; }
