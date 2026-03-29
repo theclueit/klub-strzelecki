@@ -1560,6 +1560,17 @@ export default function AdminPage() {
     if (existingReg) {
       regId = existingReg.id
     } else {
+      // Get next start number
+      const { data: maxNumData } = await supabase
+        .from('event_registrations')
+        .select('start_number')
+        .eq('event_id', onsiteEventId)
+        .not('start_number', 'is', null)
+        .order('start_number', { ascending: false })
+        .limit(1)
+        .single()
+      const nextStartNumber = ((maxNumData as any)?.start_number ?? 0) + 1
+
       const { data: newReg, error: regErr } = await supabase
         .from('event_registrations')
         .insert({
@@ -1567,8 +1578,9 @@ export default function AdminPage() {
           member_id: onsiteMemberId,
           status: 'confirmed',
           paid: false,
+          start_number: nextStartNumber,
         })
-        .select('id')
+        .select('id, start_number')
         .single()
       if (regErr || !newReg) {
         setOnsiteMessage('Blad rejestracji: ' + (regErr?.message ?? 'Nieznany blad'))
@@ -1649,7 +1661,7 @@ export default function AdminPage() {
         has_license: onsiteGuestForm.has_license,
         license_number: onsiteGuestForm.has_license ? onsiteGuestForm.license_number || null : null,
         club_name: onsiteGuestForm.club_name || null,
-        experience: 'walk-in',
+        experience: 'none',
         status: 'confirmed',
       })
       .select('id')
