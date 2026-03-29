@@ -61,6 +61,7 @@ export interface Discipline {
   targets_per_competitor: number
   distance_m: number | null
   target_name: string | null
+  scoring_type: string | null
 }
 
 export interface Event {

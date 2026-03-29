@@ -153,7 +153,7 @@ export default function AdminPage() {
   const [eventJudges, setEventJudges] = useState<EventJudge[]>([])
   const [allMembers, setAllMembers] = useState<Member[]>([])
   const [guestRegs, setGuestRegs] = useState<GuestReg[]>([])
-  const [memberRegs, setMemberRegs] = useState<{ id: string; event_id: string; member_id: string; registered_at: string; status: string; member?: Member }[]>([])
+  const [memberRegs, setMemberRegs] = useState<{ id: string; event_id: string; member_id: string; registered_at: string; status: string; paid?: boolean; start_number?: number; member?: Member }[]>([])
   const [eventDisciplines, setEventDisciplines] = useState<(EventDiscipline & { discipline?: Discipline })[]>([])
   const [regDisciplines, setRegDisciplines] = useState<RegDiscipline[]>([])
   const [eventSlots, setEventSlots] = useState<EventDisciplineSlot[]>([])
@@ -268,6 +268,10 @@ export default function AdminPage() {
   const [onsiteMessage, setOnsiteMessage] = useState('')
   const [onsiteMemberSearch, setOnsiteMemberSearch] = useState('')
   const [permSearchQuery, setPermSearchQuery] = useState('')
+  const [lastOnsiteReg, setLastOnsiteReg] = useState<{
+    memberId: string; memberName: string; eventId: string; eventTitle: string;
+    discName: string; discScoringType: string; discShotsCount: number; regId: string;
+  } | null>(null)
   const [onsiteGuestForm, setOnsiteGuestForm] = useState({
     full_name: '', email: '', phone: '', has_license: false, license_number: '', club_name: '',
   })
@@ -976,6 +980,168 @@ export default function AdminPage() {
     )
   }
 
+  function printSingleMetryczka(reg: NonNullable<typeof lastOnsiteReg>, startNumber?: string) {
+    const { memberName, eventTitle, discName, discScoringType, discShotsCount } = reg
+    const parts = memberName.trim().split(/\s+/)
+    const lastName = parts.length > 1 ? parts[parts.length - 1] : parts[0]
+    const firstName = parts.length > 1 ? parts.slice(0, -1).join(' ') : ''
+    const dashIdx = discName.indexOf(' — ')
+    const abbr = dashIdx > 0 ? discName.substring(0, dashIdx).trim() : discName.substring(0, Math.min(discName.length, 8))
+    const fullDiscName = discName.includes(' — ') ? discName.split(' — ').slice(1).join(' — ') : discName
+    const sn = startNumber || '0000'
+    const metNr = `${abbr}/${sn}`
+    const displayCount = Math.min(discShotsCount, 60) <= 10 ? Math.min(discShotsCount, 60) : 10
+
+    let html = `<!DOCTYPE html><html><head><title>Metryczka - ${memberName}</title><style>
+      @page { size: 80mm auto; margin: 2mm 4mm; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: Arial, sans-serif; font-size: 12px; color: #000; width: 72mm; }
+      .header { text-align: center; margin-bottom: 3mm; }
+      .club-name { font-size: 16px; font-weight: bold; }
+      .club-short { font-size: 24px; font-weight: 900; margin: 1mm 0; }
+      .event-name { font-size: 10px; margin-bottom: 1mm; }
+      .field { font-size: 11px; margin: 1mm 0; }
+      .field-label { font-size: 10px; }
+      .field-value { font-weight: bold; font-size: 13px; }
+      .field-value-large { font-weight: 900; font-size: 16px; }
+      .dotted { border-bottom: 1px dotted #000; min-height: 5mm; margin: 2mm 0; }
+      .sig-section { margin-top: 4mm; }
+      .sig-label { font-size: 10px; margin-top: 1mm; }
+      .sig-line { border-bottom: 1px dotted #000; height: 8mm; margin-bottom: 1mm; }
+      .score-grid { border-collapse: collapse; margin: 2mm auto; }
+      .score-grid td { border: 1px solid #000; width: 10mm; height: 8mm; text-align: center; }
+      .penalty-row { display: flex; justify-content: space-between; align-items: flex-start; margin: 2mm 0; }
+      .penalty-box { border: 1px solid #000; min-width: 15mm; min-height: 7mm; display: inline-block; }
+    </style></head><body>`
+
+    html += `<div class="header"><div class="club-name">Klub Strzelecki</div><div class="club-short">CEL</div></div>`
+    html += `<div class="event-name">${eventTitle}</div>`
+    html += `<div class="field"><span class="field-label">Konkurencja:</span><br/>${fullDiscName}</div>`
+    html += `<div class="field"><span class="field-label">Metryczka nr:</span> <span class="field-value-large">${metNr}</span></div>`
+    html += `<div class="field"><span class="field-label">Nazwisko:</span> <span class="field-value">${lastName.toUpperCase()}</span></div>`
+    html += `<div class="field"><span class="field-label">Imię:</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="field-value">${firstName}</span></div>`
+
+    if (discScoringType === 'shotgun') {
+      html += `<div class="field" style="margin-top:3mm"><span class="field-label">Czas konkurencji:</span></div><div class="dotted"></div>`
+      html += `<div class="penalty-row"><div><span class="field-label">Ilość pudeł:</span><br/><div class="penalty-box">&nbsp;</div></div><div style="text-align:right"><span class="field-label">Kara za 1 pudło:</span><br/><span class="field-value">5 sek.</span></div></div><div class="dotted"></div>`
+    } else {
+      html += `<div class="field" style="margin-top:3mm"><span class="field-label">Ilość strzałów ocenianych:</span> <span class="field-value">${displayCount}</span></div>`
+      html += `<div class="field" style="margin-top:2mm"><span class="field-label">Oceny:</span></div>`
+      const cols = 5; const rows2 = Math.ceil(displayCount / cols)
+      html += `<table class="score-grid">`
+      for (let row = 0; row < rows2; row++) { html += '<tr>'; for (let col = 0; col < cols; col++) { if (row * cols + col < displayCount) html += '<td>&nbsp;</td>' }; html += '</tr>' }
+      html += `</table>`
+    }
+
+    html += `<div class="sig-section"><div class="sig-line"></div><div class="sig-label">Podpis zawodnika/zawodniczki:</div></div>`
+    html += `<div class="sig-section"><div class="sig-line"></div><div class="sig-label">Podpis sędziego:</div></div>`
+    html += `</body></html>`
+
+    const w = window.open('', '_blank')
+    if (w) { w.document.write(html); w.document.close(); w.focus(); setTimeout(() => w.print(), 300) }
+  }
+
+  async function printAllMetryczki(reg: NonNullable<typeof lastOnsiteReg>) {
+    // Get all disciplines this member is registered for in this event
+    const memberId = reg.memberId
+    const eventId = reg.eventId
+
+    // Get member's registration
+    const memberReg = memberRegs.find(r => r.event_id === eventId && r.member?.id === memberId)
+    const startNumber = memberReg?.start_number ? String(memberReg.start_number).padStart(4, '0') : '0000'
+
+    // Get their registered disciplines
+    const regDiscIds = regDisciplines
+      .filter(rd => rd.member_registration_id === memberReg?.id)
+      .map(rd => rd.event_discipline_id)
+
+    // Get event disciplines with discipline details
+    const evDiscs = getEventDiscs(eventId)
+    const applicableDiscs = regDiscIds.length > 0
+      ? evDiscs.filter(ed => regDiscIds.includes(ed.id))
+      : evDiscs
+
+    // Filter only actual disciplines
+    const competitionDiscs = applicableDiscs.filter(ed => {
+      const disc = disciplines.find(d => d.id === ed.discipline_id)
+      return disc && disc.category === 'discipline'
+    })
+
+    if (competitionDiscs.length === 0) {
+      // Fallback: print only the current discipline
+      printSingleMetryczka(reg, startNumber)
+      return
+    }
+
+    // Build multi-page metryczki
+    let html = `<!DOCTYPE html><html><head><title>Metryczki - ${reg.memberName}</title><style>
+      @page { size: 80mm auto; margin: 2mm 4mm; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: Arial, sans-serif; font-size: 12px; color: #000; width: 72mm; }
+      .metryczka { width: 72mm; padding: 3mm 0; page-break-after: always; }
+      .metryczka:last-child { page-break-after: auto; }
+      .header { text-align: center; margin-bottom: 3mm; }
+      .club-name { font-size: 16px; font-weight: bold; }
+      .club-short { font-size: 24px; font-weight: 900; margin: 1mm 0; }
+      .event-name { font-size: 10px; margin-bottom: 1mm; }
+      .field { font-size: 11px; margin: 1mm 0; }
+      .field-label { font-size: 10px; }
+      .field-value { font-weight: bold; font-size: 13px; }
+      .field-value-large { font-weight: 900; font-size: 16px; }
+      .dotted { border-bottom: 1px dotted #000; min-height: 5mm; margin: 2mm 0; }
+      .sig-section { margin-top: 4mm; }
+      .sig-label { font-size: 10px; margin-top: 1mm; }
+      .sig-line { border-bottom: 1px dotted #000; height: 8mm; margin-bottom: 1mm; }
+      .score-grid { border-collapse: collapse; margin: 2mm auto; }
+      .score-grid td { border: 1px solid #000; width: 10mm; height: 8mm; text-align: center; }
+      .penalty-row { display: flex; justify-content: space-between; align-items: flex-start; margin: 2mm 0; }
+      .penalty-box { border: 1px solid #000; min-width: 15mm; min-height: 7mm; display: inline-block; }
+    </style></head><body>`
+
+    const parts = reg.memberName.trim().split(/\s+/)
+    const lastName = parts.length > 1 ? parts[parts.length - 1] : parts[0]
+    const firstName = parts.length > 1 ? parts.slice(0, -1).join(' ') : ''
+
+    for (const ed of competitionDiscs) {
+      const disc = disciplines.find(d => d.id === ed.discipline_id)
+      if (!disc) continue
+      const discName = disc.name
+      const dashIdx = discName.indexOf(' — ')
+      const abbr = dashIdx > 0 ? discName.substring(0, dashIdx).trim() : discName.substring(0, Math.min(discName.length, 8))
+      const fullDiscName = discName.includes(' — ') ? discName.split(' — ').slice(1).join(' — ') : discName
+      const metNr = `${abbr}/${startNumber}`
+      const displayCount = Math.min(disc.shots_count ?? 10, 60) <= 10 ? Math.min(disc.shots_count ?? 10, 60) : 10
+
+      html += `<div class="metryczka">`
+      html += `<div class="header"><div class="club-name">Klub Strzelecki</div><div class="club-short">CEL</div></div>`
+      html += `<div class="event-name">${reg.eventTitle}</div>`
+      html += `<div class="field"><span class="field-label">Konkurencja:</span><br/>${fullDiscName}</div>`
+      html += `<div class="field"><span class="field-label">Metryczka nr:</span> <span class="field-value-large">${metNr}</span></div>`
+      html += `<div class="field"><span class="field-label">Nazwisko:</span> <span class="field-value">${lastName.toUpperCase()}</span></div>`
+      html += `<div class="field"><span class="field-label">Imię:</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="field-value">${firstName}</span></div>`
+
+      if (disc.scoring_type === 'shotgun') {
+        html += `<div class="field" style="margin-top:3mm"><span class="field-label">Czas konkurencji:</span></div><div class="dotted"></div>`
+        html += `<div class="penalty-row"><div><span class="field-label">Ilość pudeł:</span><br/><div class="penalty-box">&nbsp;</div></div><div style="text-align:right"><span class="field-label">Kara za 1 pudło:</span><br/><span class="field-value">5 sek.</span></div></div><div class="dotted"></div>`
+      } else {
+        html += `<div class="field" style="margin-top:3mm"><span class="field-label">Ilość strzałów ocenianych:</span> <span class="field-value">${displayCount}</span></div>`
+        html += `<div class="field" style="margin-top:2mm"><span class="field-label">Oceny:</span></div>`
+        const cols = 5; const rows2 = Math.ceil(displayCount / cols)
+        html += `<table class="score-grid">`
+        for (let row = 0; row < rows2; row++) { html += '<tr>'; for (let col = 0; col < cols; col++) { if (row * cols + col < displayCount) html += '<td>&nbsp;</td>' }; html += '</tr>' }
+        html += `</table>`
+      }
+
+      html += `<div class="sig-section"><div class="sig-line"></div><div class="sig-label">Podpis zawodnika/zawodniczki:</div></div>`
+      html += `<div class="sig-section"><div class="sig-line"></div><div class="sig-label">Podpis sędziego:</div></div>`
+      html += `</div>`
+    }
+
+    html += `</body></html>`
+    const w = window.open('', '_blank')
+    if (w) { w.document.write(html); w.document.close(); w.focus(); setTimeout(() => w.print(), 300) }
+  }
+
   function getEventJudges(eventId: string) {
     return eventJudges
       .filter(ej => ej.event_id === eventId)
@@ -1429,7 +1595,19 @@ export default function AdminPage() {
       return
     }
 
-    setOnsiteMessage('Zarejestrowano pomyslnie!')
+    // Mark as paid (cash) and get start number
+    await supabase.from('event_registrations').update({ paid: true }).eq('id', regId)
+
+    // Get member info for metryczka
+    const regMember = allMembers.find(m => m.id === onsiteMemberId)
+    const regEvent = events.find(e => e.id === onsiteEventId)
+    const regDisc = disciplines.find(d => {
+      const ed = eventDisciplines.find(ed2 => ed2.id === onsiteDisciplineId)
+      return ed && d.id === ed.discipline_id
+    })
+
+    setOnsiteMessage(`✅ Zarejestrowano i opłacono gotówką!`)
+    setLastOnsiteReg({ memberId: onsiteMemberId, memberName: regMember?.full_name ?? '', eventId: onsiteEventId, eventTitle: regEvent?.title ?? '', discName: regDisc?.name ?? '', discScoringType: regDisc?.scoring_type ?? 'points', discShotsCount: regDisc?.shots_count ?? 10, regId })
     setOnsiteMemberId('')
     setOnsiteDisciplineId('')
     setOnsiteSlotId('')
@@ -1500,7 +1678,14 @@ export default function AdminPage() {
       return
     }
 
-    setOnsiteMessage('Gość zarejestrowany pomyślnie!')
+    const regEvent = events.find(e => e.id === onsiteEventId)
+    const regDisc = disciplines.find(d => {
+      const ed = eventDisciplines.find(ed2 => ed2.id === onsiteDisciplineId)
+      return ed && d.id === ed.discipline_id
+    })
+
+    setOnsiteMessage(`✅ Gość zarejestrowany!`)
+    setLastOnsiteReg({ memberId: '', memberName: onsiteGuestForm.full_name, eventId: onsiteEventId, eventTitle: regEvent?.title ?? '', discName: regDisc?.name ?? '', discScoringType: regDisc?.scoring_type ?? 'points', discShotsCount: regDisc?.shots_count ?? 10, regId: guestReg.id })
     setOnsiteGuestForm({ full_name: '', email: '', phone: '', has_license: false, license_number: '', club_name: '' })
     setOnsiteDisciplineId('')
     setOnsiteSlotId('')
@@ -3439,7 +3624,7 @@ export default function AdminPage() {
                   </div>
                 )}
 
-                <div className="mt-3 flex items-center gap-3">
+                <div className="mt-3 flex items-center gap-3 flex-wrap">
                   <button
                     onClick={onsiteMode === 'member' ? quickRegisterOnsite : quickRegisterGuestOnsite}
                     disabled={onsiteSaving || !onsiteEventId || !onsiteDisciplineId || (onsiteMode === 'member' ? !onsiteMemberId : !onsiteGuestForm.full_name)}
@@ -3449,11 +3634,42 @@ export default function AdminPage() {
                     {onsiteSaving ? 'Rejestrowanie...' : onsiteMode === 'member' ? 'Zarejestruj członka' : 'Zarejestruj gościa'}
                   </button>
                   {onsiteMessage && (
-                    <p className={`text-xs ${onsiteMessage.includes('pomyślnie') || onsiteMessage.includes('pomyslnie') ? 'text-green-400' : 'text-danger'}`}>
+                    <p className={`text-xs ${onsiteMessage.includes('✅') ? 'text-green-400' : 'text-danger'}`}>
                       {onsiteMessage}
                     </p>
                   )}
                 </div>
+
+                {/* Po rejestracji: drukuj metryczkę */}
+                {lastOnsiteReg && (
+                  <div className="mt-3 p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
+                    <p className="text-xs text-green-400 font-medium mb-2">
+                      Zarejestrowano: {lastOnsiteReg.memberName} — {lastOnsiteReg.discName}
+                    </p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={() => printSingleMetryczka(lastOnsiteReg)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-border text-xs rounded-lg hover:border-primary hover:text-primary transition-colors"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        Drukuj metryczkę
+                      </button>
+                      <button
+                        onClick={() => printAllMetryczki(lastOnsiteReg)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-card border border-border text-xs rounded-lg hover:border-primary hover:text-primary transition-colors"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        Drukuj wszystkie dyscypliny
+                      </button>
+                      <button
+                        onClick={() => setLastOnsiteReg(null)}
+                        className="text-xs text-muted hover:text-foreground px-2 py-1.5"
+                      >
+                        Zamknij
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )
           })()}
