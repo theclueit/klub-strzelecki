@@ -3729,18 +3729,55 @@ export default function AdminPage() {
                               }
                             </td>
                             <td className="px-4 py-2 text-right">
-                              {!(r as any).paid && total > 0 && (
+                              <div className="flex items-center justify-end gap-1 flex-wrap">
+                                {!(r as any).paid && total > 0 && (
+                                  <button
+                                    onClick={async () => {
+                                      if (!confirm(`Zapłacono gotówką: ${(r.member as any)?.full_name} — ${total.toFixed(0)} zł?`)) return
+                                      await supabase.from('event_registrations').update({ paid: true }).eq('id', r.id)
+                                      loadAll()
+                                    }}
+                                    className="flex items-center gap-1 text-xs px-2.5 py-1.5 bg-success/10 text-success border border-success/30 rounded-lg hover:bg-success/20 transition-colors font-medium"
+                                  >
+                                    <DollarSign className="w-3 h-3" />
+                                    Gotówka {total.toFixed(0)} zł
+                                  </button>
+                                )}
                                 <button
-                                  onClick={async () => {
-                                    if (!confirm(`Oznaczyć jako opłacone? (${(r.member as any)?.full_name})`)) return
-                                    await supabase.from('event_registrations').update({ paid: true }).eq('id', r.id)
-                                    loadAll()
+                                  onClick={() => {
+                                    const member = (r.member as any)
+                                    const discIds = regDisciplines.filter(rd => rd.member_registration_id === r.id).map(rd => rd.event_discipline_id)
+                                    const evDiscs = getEventDiscs(ev.id)
+                                    const applicableDiscs = discIds.length > 0 ? evDiscs.filter(ed => discIds.includes(ed.id)) : evDiscs
+                                    const competitionDiscs = applicableDiscs.filter(ed => {
+                                      const disc = disciplines.find(d => d.id === ed.discipline_id)
+                                      return disc && disc.category === 'discipline'
+                                    })
+                                    if (competitionDiscs.length === 0) return alert('Brak dyscyplin do wydruku')
+                                    const sn = r.start_number ? String(r.start_number).padStart(4, '0') : '0000'
+                                    const firstDisc = disciplines.find(d => d.id === competitionDiscs[0].discipline_id)
+                                    const regData = {
+                                      memberId: member?.id ?? '',
+                                      memberName: member?.full_name ?? '?',
+                                      eventId: ev.id,
+                                      eventTitle: ev.title,
+                                      discName: firstDisc?.name ?? '',
+                                      discScoringType: firstDisc?.scoring_type ?? 'points',
+                                      discShotsCount: firstDisc?.shots_count ?? 10,
+                                      regId: r.id,
+                                    }
+                                    if (competitionDiscs.length === 1) {
+                                      printSingleMetryczka(regData, sn)
+                                    } else {
+                                      printAllMetryczki(regData)
+                                    }
                                   }}
-                                  className="text-xs px-2 py-1 bg-success/10 text-success border border-success/30 rounded-lg hover:bg-success/20 transition-colors"
+                                  className="flex items-center gap-1 text-xs px-2 py-1.5 border border-border rounded-lg hover:border-primary hover:text-primary transition-colors"
+                                  title="Drukuj metryczki"
                                 >
-                                  Oznacz zapłacone
+                                  <Printer className="w-3 h-3" />
                                 </button>
-                              )}
+                              </div>
                             </td>
                           </tr>
                         )
