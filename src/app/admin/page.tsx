@@ -308,7 +308,7 @@ export default function AdminPage() {
     const [evRes, discRes, judgesRes, ejRes, membersRes, guestRes, memberRegsRes, edRes, rdRes, slotsRes, invRes, regRes] = await Promise.all([
       supabase.from('events').select('*').order('start_date', { ascending: false }),
       supabase.from('disciplines').select('*').order('name'),
-      supabase.from('members').select('*').in('role', ['judge', 'admin']).order('full_name'),
+      supabase.from('members').select('*').in('role', ['judge', 'admin', 'superadmin']).not('judge_license_number', 'is', null).order('full_name'),
       supabase.from('event_judges').select('*'),
       supabase.from('members').select('*').eq('is_active', true).order('full_name'),
       supabase.from('guest_registrations').select('*').order('registered_at', { ascending: false }),
@@ -939,7 +939,23 @@ export default function AdminPage() {
   }
 
   async function promoteToJudge(memberId: string) {
+    const m = allMembers.find(x => x.id === memberId)
+    if (!m?.judge_license_number) {
+      alert(`${m?.full_name || 'Ten członek'} nie posiada licencji sędziowskiej. Licencję można dodać w profilu użytkownika.`)
+      return
+    }
     await supabase.from('members').update({ role: 'judge' }).eq('id', memberId)
+    loadAll()
+  }
+
+  async function changeRole(memberId: string, newRole: string) {
+    const m = allMembers.find(x => x.id === memberId)
+    if (newRole === 'judge' && !m?.judge_license_number) {
+      alert(`${m?.full_name || 'Ten członek'} nie posiada licencji sędziowskiej.\nLicencję sędziowską można dodać w profilu użytkownika.`)
+      return
+    }
+    if (!confirm(`Zmienić rolę ${m?.full_name || ''} na "${newRole}"?`)) return
+    await supabase.from('members').update({ role: newRole }).eq('id', m!.id)
     loadAll()
   }
 
@@ -2384,7 +2400,7 @@ export default function AdminPage() {
                         <div className="flex flex-wrap gap-2 mb-3">
                           {assigned.map(j => (
                             <span key={j.id} className="inline-flex items-center gap-1 px-3 py-1 bg-primary/10 text-primary text-xs rounded-full font-medium">
-                              {j.full_name}
+                              {j.full_name} {j.judge_license_number ? `(${j.judge_license_number})` : ''}
                               <button onClick={() => removeJudge(ev.id, j.id)} className="hover:text-danger">
                                 <X className="w-3 h-3" />
                               </button>
@@ -2403,7 +2419,7 @@ export default function AdminPage() {
                                 className="inline-flex items-center gap-1 px-3 py-1 border border-border text-xs rounded-full hover:border-primary hover:text-primary transition-colors"
                               >
                                 <Plus className="w-3 h-3" />
-                                {j.full_name}
+                                {j.full_name} {j.judge_license_number ? `(${j.judge_license_number})` : ''}
                               </button>
                             ))}
                           </div>
@@ -2921,7 +2937,7 @@ export default function AdminPage() {
 
           {/* Sekcja: Sędziowie */}
           {(() => {
-            const judgesList = allMembers.filter(m => m.role === 'judge')
+            const judgesList = allMembers.filter(m => m.role === 'judge' || (m.judge_license_number && ['admin', 'superadmin'].includes(m.role)))
             return (
               <div className="mb-6">
                 <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
@@ -2936,7 +2952,8 @@ export default function AdminPage() {
                       <thead>
                         <tr className="border-b border-border text-xs text-muted">
                           <th className="text-left px-4 py-2">Imię i nazwisko</th>
-                          <th className="text-left px-4 py-2">Licencja</th>
+                          <th className="text-left px-4 py-2">Licencja sędziowska</th>
+                          <th className="text-left px-4 py-2">Klasa</th>
                           <th className="text-left px-4 py-2">Przypisane zawody</th>
                           <th className="text-left px-4 py-2 w-28">Rola</th>
                         </tr>
@@ -2950,19 +2967,15 @@ export default function AdminPage() {
                           return (
                             <tr key={j.id} className="border-b border-border/50 last:border-0 hover:bg-card-hover">
                               <td className="px-4 py-2.5 font-medium">{j.full_name}</td>
-                              <td className="px-4 py-2.5 text-muted">{j.license_number || '-'}</td>
+                              <td className="px-4 py-2.5 text-muted">{j.judge_license_number || '-'}</td>
+                              <td className="px-4 py-2.5 text-muted">{j.judge_class || '-'}</td>
                               <td className="px-4 py-2.5 text-muted text-xs">
                                 {assignedEvents.length === 0 ? '-' : assignedEvents.map(e => e!.title).join(', ')}
                               </td>
                               <td className="px-4 py-2.5">
                                 <select
                                   value={j.role}
-                                  onChange={async (e) => {
-                                    const newRole = e.target.value
-                                    if (!confirm(`Zmienić rolę ${j.full_name} na "${newRole}"?`)) return
-                                    await supabase.from('members').update({ role: newRole }).eq('id', j.id)
-                                    loadAll()
-                                  }}
+                                  onChange={(e) => changeRole(j.id, e.target.value)}
                                   className="bg-background border border-border rounded px-2 py-1 text-xs"
                                 >
                                   <option value="member">Członek</option>
@@ -3009,12 +3022,7 @@ export default function AdminPage() {
                           <td className="px-4 py-2.5">
                             <select
                               value={m.role}
-                              onChange={async (e) => {
-                                const newRole = e.target.value
-                                if (!confirm(`Zmienić rolę ${m.full_name} na "${newRole}"?`)) return
-                                await supabase.from('members').update({ role: newRole }).eq('id', m.id)
-                                loadAll()
-                              }}
+                              onChange={(e) => changeRole(m.id, e.target.value)}
                               className="bg-background border border-border rounded px-2 py-1 text-xs"
                             >
                               <option value="member">Członek</option>
@@ -3059,12 +3067,7 @@ export default function AdminPage() {
                           <td className="px-4 py-2.5">
                             <select
                               value={m.role}
-                              onChange={async (e) => {
-                                const newRole = e.target.value
-                                if (!confirm(`Zmienić rolę ${m.full_name} na "${newRole}"?`)) return
-                                await supabase.from('members').update({ role: newRole }).eq('id', m.id)
-                                loadAll()
-                              }}
+                              onChange={(e) => changeRole(m.id, e.target.value)}
                               className="bg-background border border-border rounded px-2 py-1 text-xs"
                             >
                               <option value="member">Członek</option>
@@ -3136,12 +3139,7 @@ export default function AdminPage() {
                           <td className="px-4 py-2.5">
                             <select
                               value={m.role}
-                              onChange={async (e) => {
-                                const newRole = e.target.value
-                                if (!confirm(`Zmienić rolę ${m.full_name} na "${newRole}"?`)) return
-                                await supabase.from('members').update({ role: newRole }).eq('id', m.id)
-                                loadAll()
-                              }}
+                              onChange={(e) => changeRole(m.id, e.target.value)}
                               className="bg-background border border-border rounded px-2 py-1 text-xs"
                             >
                               <option value="member">Członek</option>
@@ -3188,12 +3186,7 @@ export default function AdminPage() {
                           <td className="px-4 py-2.5">
                             <select
                               value={m.role}
-                              onChange={async (e) => {
-                                const newRole = e.target.value
-                                if (!confirm(`Zmienić rolę ${m.full_name} na "${newRole}"?`)) return
-                                await supabase.from('members').update({ role: newRole }).eq('id', m.id)
-                                loadAll()
-                              }}
+                              onChange={(e) => changeRole(m.id, e.target.value)}
                               className="bg-background border border-border rounded px-2 py-1 text-xs"
                             >
                               <option value="member">Członek</option>
