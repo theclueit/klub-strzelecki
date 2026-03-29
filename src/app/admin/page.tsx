@@ -1995,6 +1995,26 @@ export default function AdminPage() {
     setResultsPreview({ eventId, eventTitle: ev.title, results: data ?? [] })
   }
 
+  // ---- VIEW MEMBER TARGETS ----
+  async function viewMemberTargets(memberId: string, eventId: string, memberName: string) {
+    const { data } = await supabase
+      .from('results')
+      .select('id, total_score, max_score, tens_count, misses, time_seconds, target_image_url, discipline:disciplines(name, scoring_type)')
+      .eq('member_id', memberId)
+      .eq('event_id', eventId)
+      .order('shot_at', { ascending: false })
+    if (!data || data.length === 0) {
+      alert(`Brak wyników dla ${memberName} w tym wydarzeniu`)
+      return
+    }
+    const withImages = data.filter((r: any) => r.target_image_url)
+    if (withImages.length === 0) {
+      alert(`${memberName} nie ma zdjęć tarcz w tym wydarzeniu`)
+      return
+    }
+    setResultsPreview({ eventId, eventTitle: memberName, results: data })
+  }
+
   // ---- PRINT METRYCZKI (thermal printer TSP700 II, 85x110mm) ----
   async function printMetryczki(eventId: string) {
     const ev = events.find(e => e.id === eventId)
@@ -3888,6 +3908,13 @@ export default function AdminPage() {
                                   title="Drukuj metryczki"
                                 >
                                   <Printer className="w-3 h-3" />
+                                </button>
+                                <button
+                                  onClick={() => viewMemberTargets((r.member as any)?.id, ev.id, (r.member as any)?.full_name ?? '?')}
+                                  className="flex items-center gap-1 text-xs px-2 py-1.5 border border-border rounded-lg hover:border-blue-400 hover:text-blue-400 transition-colors"
+                                  title="Podgląd tarcz"
+                                >
+                                  <Camera className="w-3 h-3" />
                                 </button>
                               </div>
                             </td>
