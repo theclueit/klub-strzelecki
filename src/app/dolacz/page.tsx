@@ -35,7 +35,7 @@ export default function JoinPage() {
     setForm(prev => ({ ...prev, [field]: value }))
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleRegistration(e: React.FormEvent) {
     e.preventDefault()
     setError('')
 
@@ -163,7 +163,7 @@ export default function JoinPage() {
           <p className="text-sm text-muted mt-1">Utwórz konto i wypełnij formularz członkowski</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
+        <form onSubmit={handleRegistration} className="space-y-5">
           {/* Name */}
           <div>
             <label className="text-sm text-muted block mb-1">Imię i nazwisko *</label>

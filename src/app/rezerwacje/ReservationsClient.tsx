@@ -1,160 +1,21 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { createSupabaseBrowser } from '@/lib/supabase'
+import { useState, useMemo, useRef } from 'react'
 import { useAuth } from '@/components/AuthProvider'
 import { ChevronLeft, ChevronRight, Clock, CreditCard, CheckCircle, X, MapPin, Crosshair, Loader2, Printer, Target, UserPlus, Package } from 'lucide-react'
 import Link from 'next/link'
-
-interface Lane {
-  id: string
-  name: string
-  length_m: number
-  stations_count: number
-  description: string | null
-  price_per_hour_pln: number
-  open_time: string
-  close_time: string
-  min_advance_minutes: number
-}
-
-interface Reservation {
-  id: string
-  lane_id: string
-  station_number: number
-  member_id: string | null
-  event_id: string | null
-  reservation_date: string
-  start_time: string
-  end_time: string
-  status: string
-  paid: boolean
-  guest_name: string | null
-  notes: string | null
-  hold_token: string | null
-  hold_expires_at: string | null
-  event?: { title: string } | null
-  member?: { full_name: string } | null
-}
-
-// Generate 30-min slots between open and close
-function getLaneSlots(lane: Lane | null): string[] {
-  if (!lane) return []
-  const openH = parseInt(lane.open_time?.split(':')[0] || '8')
-  const openM = parseInt(lane.open_time?.split(':')[1] || '0')
-  const closeH = parseInt(lane.close_time?.split(':')[0] || '20')
-  const closeM = parseInt(lane.close_time?.split(':')[1] || '0')
-  const startMin = openH * 60 + openM
-  const endMin = closeH * 60 + closeM
-  const slots: string[] = []
-  for (let m = startMin; m < endMin; m += 30) {
-    const h = Math.floor(m / 60)
-    const mm = m % 60
-    slots.push(`${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`)
-  }
-  return slots
-}
-
-function timeToMin(t: string) {
-  const [h, m] = t.split(':').map(Number)
-  return h * 60 + (m || 0)
-}
-
-function formatDate(date: Date) {
-  return date.toISOString().split('T')[0]
-}
-
-function addDays(date: Date, days: number) {
-  const d = new Date(date)
-  d.setDate(d.getDate() + days)
-  return d
-}
-
-function getDayName(date: Date) {
-  return date.toLocaleDateString('pl-PL', { weekday: 'short' })
-}
-
-interface RangeWeapon {
-  id: string
-  name: string
-  type: string
-  caliber: string
-  status: string
-}
-
-interface ShootingPackage {
-  id: string
-  name: string
-  weapon_id: string
-  ammo_count: number
-  duration_minutes: number
-  price_pln: number
-}
-
-interface Instructor {
-  id: string
-  full_name: string
-}
+import { formatDate, addDays, timeToMin, getDayName } from '@/lib/date'
+import type { Lane, Reservation } from '@/hooks/reservations/types'
+import { useReservationData } from '@/hooks/reservations/useReservationData'
+import { useHoldReservation } from '@/hooks/reservations/useHoldReservation'
+import { useDragSelection } from '@/hooks/reservations/useDragSelection'
+import { useBooking } from '@/hooks/reservations/useBooking'
+import { useOnsiteBooking } from '@/hooks/reservations/useOnsiteBooking'
 
 export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
   const { member } = useAuth()
-  const supabase = createSupabaseBrowser()
   const [selectedDate, setSelectedDate] = useState(() => formatDate(new Date()))
-  const [reservations, setReservations] = useState<Reservation[]>([])
-  const [loadingRes, setLoadingRes] = useState(false)
   const [selectedLane, setSelectedLane] = useState<Lane | null>(lanes[0] || null)
-  const [showBooking, setShowBooking] = useState<{ stationNumber: number; slotTime: string } | null>(null)
-  const [bookingSlots, setBookingSlots] = useState(2) // 2 slots = 1 hour
-  const [bookingStations, setBookingStations] = useState(1) // ile stanowisk obok siebie
-  const [bookingNotes, setBookingNotes] = useState('')
-  const [bookingLoading, setBookingLoading] = useState(false)
-  const [paymentLoading, setPaymentLoading] = useState<string | null>(null)
-  // Hold (temporary slot lock)
-  const [holdToken, setHoldToken] = useState<string | null>(null)
-  const [holdExpiresAt, setHoldExpiresAt] = useState<Date | null>(null)
-  const [holdTimeLeft, setHoldTimeLeft] = useState(0) // seconds
-  const [holdExtending, setHoldExtending] = useState(false)
-  const [showExtendPrompt, setShowExtendPrompt] = useState(false)
-
-  // Guest booking form (when not logged in)
-  const [guestBooking, setGuestBooking] = useState({
-    full_name: '',
-    email: '',
-    phone: '',
-    address: '',
-    document: '',
-  })
-
-  // Drag-to-select
-  const [dragStart, setDragStart] = useState<{ sn: number; slotIdx: number } | null>(null)
-  const [dragEnd, setDragEnd] = useState<{ sn: number; slotIdx: number } | null>(null)
-  const isDragging = useRef(false)
-  const gridRef = useRef<HTMLTableElement>(null)
-
-  // On-site recreational booking (registrar only)
-  const [showOnsiteBooking, setShowOnsiteBooking] = useState(false)
-  const [onsiteWeapons, setOnsiteWeapons] = useState<RangeWeapon[]>([])
-  const [onsitePackages, setOnsitePackages] = useState<ShootingPackage[]>([])
-  const [onsiteInstructors, setOnsiteInstructors] = useState<Instructor[]>([])
-  const [onsiteLoading, setOnsiteLoading] = useState(false)
-  const [onsiteSaving, setOnsiteSaving] = useState(false)
-  const [onsiteSuccess, setOnsiteSuccess] = useState('')
-  const [onsiteForm, setOnsiteForm] = useState({
-    package_id: '',
-    weapon_id: '',
-    instructor_id: '',
-    start_time: '10:00',
-    duration_minutes: '60',
-    ammo_count: '50',
-    price_pln: '0',
-    guest_name: '',
-    guest_phone: '',
-    guest_address: '',
-    guest_document: '',
-    guest_email: '',
-    targets: '',
-    notes: '',
-  })
 
   const dateObj = useMemo(() => new Date(selectedDate + 'T00:00:00'), [selectedDate])
   const weekStart = useMemo(() => {
@@ -165,356 +26,104 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
   }, [dateObj])
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart])
 
-  // Rezerwacje na cały tydzień (do kolorowania kafelków dat)
-  const [weekReservations, setWeekReservations] = useState<Record<string, { total: number; paid: number; maxSlots: number }>>({})
+  const isPast = dateObj < new Date(new Date().toDateString())
 
-  const loadReservations = useCallback(async () => {
-    if (!selectedLane) return
-    setLoadingRes(true)
-    const { data } = await supabase
-      .from('lane_reservations')
-      .select('*, event:events(title), member:members!lane_reservations_member_id_fkey(full_name)')
-      .eq('lane_id', selectedLane.id)
-      .eq('reservation_date', selectedDate)
-      .neq('status', 'cancelled')
-    // Filter out expired holds client-side (server cleanup is async)
-    const now = new Date().toISOString()
-    const filtered = (data ?? []).filter((r: any) =>
-      r.status !== 'hold' || !r.hold_expires_at || r.hold_expires_at > now
-    )
-    setReservations(filtered as any[])
-    setLoadingRes(false)
-  }, [selectedLane, selectedDate])
+  const gridRef = useRef<HTMLTableElement>(null)
 
-  const loadWeekStats = useCallback(async () => {
-    if (!selectedLane) return
-    const weekStartStr = formatDate(weekStart)
-    const weekEndStr = formatDate(addDays(weekStart, 6))
-    const { data } = await supabase
-      .from('lane_reservations')
-      .select('reservation_date, start_time, end_time, paid, station_number')
-      .eq('lane_id', selectedLane.id)
-      .gte('reservation_date', weekStartStr)
-      .lte('reservation_date', weekEndStr)
-      .neq('status', 'cancelled')
+  // --- Hooks ---
+  const {
+    reservations,
+    loadingRes,
+    weekReservations,
+    loadReservations,
+    slots,
+    closeMin,
+    stationNumbers,
+    slotMap,
+    spanMap,
+  } = useReservationData({ selectedLane, selectedDate, weekStart })
 
-    // Oblicz statystyki per dzień
-    const openH = parseInt(selectedLane.open_time?.split(':')[0] || '8')
-    const closeH = parseInt(selectedLane.close_time?.split(':')[0] || '20')
-    const slotsPerStation = (closeH - openH) * 2 // 30-min slots
-    const maxSlots = slotsPerStation * selectedLane.stations_count
+  const {
+    holdToken,
+    setHoldToken,
+    holdExpiresAt,
+    setHoldExpiresAt,
+    holdTimeLeft,
+    setHoldTimeLeft,
+    holdExtending,
+    showExtendPrompt,
+    setShowExtendPrompt,
+    releaseHold,
+    extendHold,
+  } = useHoldReservation({ loadReservations, setShowBooking: (val) => setShowBookingDirect(val) })
 
-    const stats: Record<string, { total: number; paid: number; maxSlots: number }> = {}
-    for (const r of (data ?? [])) {
-      const d = r.reservation_date
-      if (!stats[d]) stats[d] = { total: 0, paid: 0, maxSlots }
-      const startMin = timeToMin(r.start_time)
-      const endMin = timeToMin(r.end_time)
-      const slotCount = (endMin - startMin) / 30
-      stats[d].total += slotCount
-      if (r.paid) stats[d].paid += slotCount
-    }
-    setWeekReservations(stats)
-  }, [selectedLane, weekStart])
+  const {
+    showBooking,
+    setShowBooking: setShowBookingDirect,
+    bookingSlots,
+    setBookingSlots,
+    bookingStations,
+    setBookingStations,
+    bookingNotes,
+    setBookingNotes,
+    bookingLoading,
+    guestBooking,
+    setGuestBooking,
+    paymentLoading,
+    areAdjacentStationsFree,
+    openBookingFromSelection,
+    handleBook,
+    handlePayExisting,
+    handleMarkPaid,
+  } = useBooking({
+    selectedLane,
+    selectedDate,
+    member,
+    holdToken,
+    setHoldToken,
+    setHoldExpiresAt,
+    setHoldTimeLeft,
+    setShowExtendPrompt,
+    loadReservations,
+    slots,
+    slotMap,
+    closeMin,
+  })
 
-  useEffect(() => { loadReservations() }, [loadReservations])
-  useEffect(() => { loadWeekStats() }, [loadWeekStats])
+  const {
+    dragStart,
+    setDragStart,
+    dragEnd,
+    setDragEnd,
+    isInDragSelection,
+    handlePointerDown,
+    handleDragMove,
+    handleSlotClick,
+  } = useDragSelection({
+    slots,
+    slotMap,
+    isPast,
+    openBookingFromSelection,
+  })
 
-  // Hold countdown timer
-  useEffect(() => {
-    if (!holdExpiresAt || !holdToken) return
-    const tick = () => {
-      const left = Math.max(0, Math.round((holdExpiresAt.getTime() - Date.now()) / 1000))
-      setHoldTimeLeft(left)
-      if (left <= 30 && left > 0 && !showExtendPrompt) {
-        setShowExtendPrompt(true)
-      }
-      if (left <= 0) {
-        // Hold expired — close modal and reload
-        setHoldToken(null)
-        setHoldExpiresAt(null)
-        setShowBooking(null)
-        setShowExtendPrompt(false)
-        loadReservations()
-      }
-    }
-    tick()
-    const iv = setInterval(tick, 1000)
-    return () => clearInterval(iv)
-  }, [holdExpiresAt, holdToken, showExtendPrompt])
+  const {
+    showOnsiteBooking,
+    setShowOnsiteBooking,
+    onsiteWeapons,
+    onsitePackages,
+    onsiteInstructors,
+    onsiteLoading,
+    onsiteSaving,
+    onsiteSuccess,
+    setOnsiteSuccess,
+    onsiteForm,
+    setOnsiteForm,
+    openOnsiteBooking,
+    handlePackageSelect,
+    handleOnsiteSubmit,
+  } = useOnsiteBooking({ selectedDate, member, loadReservations })
 
-  // Release hold when modal closes without booking
-  const releaseHold = useCallback(async () => {
-    if (!holdToken) return
-    try {
-      await fetch('/api/reservations/hold', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hold_token: holdToken }),
-      })
-    } catch {}
-    setHoldToken(null)
-    setHoldExpiresAt(null)
-    setShowExtendPrompt(false)
-    loadReservations()
-  }, [holdToken])
-
-  // Extend hold
-  const extendHold = useCallback(async () => {
-    if (!holdToken) return
-    setHoldExtending(true)
-    try {
-      const res = await fetch('/api/reservations/hold', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hold_token: holdToken }),
-      })
-      const data = await res.json()
-      if (res.ok) {
-        setHoldExpiresAt(new Date(data.expires_at))
-        setShowExtendPrompt(false)
-      } else {
-        // Hold expired server-side
-        setHoldToken(null)
-        setHoldExpiresAt(null)
-        setShowBooking(null)
-        setShowExtendPrompt(false)
-        loadReservations()
-      }
-    } catch {}
-    setHoldExtending(false)
-  }, [holdToken])
-
-  const slots = useMemo(() => getLaneSlots(selectedLane), [selectedLane])
-  const closeMin = useMemo(() => {
-    if (!selectedLane) return 20 * 60
-    return timeToMin(selectedLane.close_time || '20:00')
-  }, [selectedLane])
-
-  const stationNumbers = useMemo(() => {
-    if (!selectedLane) return []
-    return Array.from({ length: selectedLane.stations_count }, (_, i) => i + 1)
-  }, [selectedLane])
-
-  // Map: "station-slotTime" -> reservation
-  const slotMap = useMemo(() => {
-    const map: Record<string, Reservation> = {}
-    for (const r of reservations) {
-      const startMin = timeToMin(r.start_time)
-      const endMin = timeToMin(r.end_time)
-      for (let m = startMin; m < endMin; m += 30) {
-        const h = Math.floor(m / 60)
-        const mm = m % 60
-        const key = `${r.station_number}-${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`
-        map[key] = r
-      }
-    }
-    return map
-  }, [reservations])
-
-  // Span info for colSpan rendering
-  const spanMap = useMemo(() => {
-    const map: Record<string, { res: Reservation; span: number; isFirst: boolean }> = {}
-    for (const r of reservations) {
-      const startMin = timeToMin(r.start_time)
-      const endMin = timeToMin(r.end_time)
-      const totalSlots = (endMin - startMin) / 30
-      let idx = 0
-      for (let m = startMin; m < endMin; m += 30) {
-        const h = Math.floor(m / 60)
-        const mm = m % 60
-        const key = `${r.station_number}-${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`
-        map[key] = { res: r, span: totalSlots, isFirst: idx === 0 }
-        idx++
-      }
-    }
-    return map
-  }, [reservations])
-
-  const isSlotFree = (station: number, slotTime: string, slotCount: number = 1) => {
-    const startMin = timeToMin(slotTime)
-    for (let i = 0; i < slotCount; i++) {
-      const m = startMin + i * 30
-      if (m + 30 > closeMin) return false
-      const h = Math.floor(m / 60)
-      const mm = m % 60
-      const key = `${station}-${h.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}`
-      if (slotMap[key]) return false
-    }
-    return true
-  }
-
-  // Sprawdza czy N sąsiednich stanowisk jest wolnych na dany czas
-  const areAdjacentStationsFree = (startStation: number, stationCount: number, slotTime: string, slotCount: number) => {
-    const maxStation = selectedLane?.stations_count || 0
-    for (let s = 0; s < stationCount; s++) {
-      const sn = startStation + s
-      if (sn > maxStation) return false
-      if (!isSlotFree(sn, slotTime, slotCount)) return false
-    }
-    return true
-  }
-
-  // Drag selection: compute rectangle of selected cells
-  const dragSelection = useMemo(() => {
-    if (!dragStart || !dragEnd) return null
-    const minSn = Math.min(dragStart.sn, dragEnd.sn)
-    const maxSn = Math.max(dragStart.sn, dragEnd.sn)
-    const minSlot = Math.min(dragStart.slotIdx, dragEnd.slotIdx)
-    const maxSlot = Math.max(dragStart.slotIdx, dragEnd.slotIdx)
-    return { minSn, maxSn, minSlot, maxSlot }
-  }, [dragStart, dragEnd])
-
-  const isInDragSelection = (sn: number, slotIdx: number) => {
-    if (!dragSelection) return false
-    return sn >= dragSelection.minSn && sn <= dragSelection.maxSn &&
-      slotIdx >= dragSelection.minSlot && slotIdx <= dragSelection.maxSlot
-  }
-
-  // Desktop drag-to-select uses pointer events to distinguish mouse from touch.
-  // Touch/click uses tap-to-select: 1st tap = start, 2nd tap = end.
-  // Refs mirror dragStart/dragEnd so the global mouseup handler always has current values
-  // (state updates are async, but mouseup fires before React re-renders).
-  const pointerIsMouse = useRef(false)
-  const dragStartRef = useRef(dragStart)
-  const dragEndRef = useRef(dragEnd)
-  dragStartRef.current = dragStart
-  dragEndRef.current = dragEnd
-
-  const handlePointerDown = (sn: number, slotIdx: number, pointerType: string) => {
-    if (isPast) return
-    if (pointerType === 'mouse') {
-      // Desktop: start drag — update refs immediately for mouseup handler
-      const pos = { sn, slotIdx }
-      pointerIsMouse.current = true
-      isDragging.current = true
-      dragStartRef.current = pos
-      dragEndRef.current = pos
-      setDragStart(pos)
-      setDragEnd(pos)
-    }
-    // Touch: do nothing here — onClick will handle tap-to-select
-  }
-
-  const handleDragMove = (sn: number, slotIdx: number) => {
-    if (!isDragging.current) return
-    const pos = { sn, slotIdx }
-    dragEndRef.current = pos
-    setDragEnd(pos)
-  }
-
-  const handleDragEnd = () => {
-    if (!isDragging.current) return
-    isDragging.current = false
-
-    const start = dragStartRef.current
-    const end = dragEndRef.current
-    if (!start || !end) return
-
-    // Open booking from drag selection
-    openBookingFromSelection(start, end)
-    dragStartRef.current = null
-    dragEndRef.current = null
-    setDragStart(null)
-    setDragEnd(null)
-    // Block the upcoming click event from re-triggering
-    pointerIsMouse.current = true
-    setTimeout(() => { pointerIsMouse.current = false }, 50)
-  }
-
-  // Click handler: tap-to-select (primarily for touch, also works as fallback)
-  // 1st click = start, 2nd click = end → open booking
-  const handleSlotClick = (sn: number, slotIdx: number) => {
-    if (isPast) return
-    // Skip if this click came from a mouse drag-end (already handled)
-    if (pointerIsMouse.current) {
-      pointerIsMouse.current = false
-      return
-    }
-
-    if (!dragStart) {
-      // First tap — mark start
-      setDragStart({ sn, slotIdx })
-      setDragEnd({ sn, slotIdx })
-    } else {
-      // Second tap — mark end and open booking
-      const end = { sn, slotIdx }
-      openBookingFromSelection(dragStart, end)
-      setDragStart(null)
-      setDragEnd(null)
-    }
-  }
-
-  // Shared: open booking modal from two corner points — creates a hold
-  const openBookingFromSelection = async (start: { sn: number; slotIdx: number }, end: { sn: number; slotIdx: number }) => {
-    const sel = {
-      minSn: Math.min(start.sn, end.sn),
-      maxSn: Math.max(start.sn, end.sn),
-      minSlot: Math.min(start.slotIdx, end.slotIdx),
-      maxSlot: Math.max(start.slotIdx, end.slotIdx),
-    }
-
-    const slotCount = sel.maxSlot - sel.minSlot + 1
-    let allFree = true
-    for (let s = sel.minSn; s <= sel.maxSn; s++) {
-      for (let si = sel.minSlot; si <= sel.maxSlot; si++) {
-        const key = `${s}-${slots[si]}`
-        if (slotMap[key]) { allFree = false; break }
-      }
-      if (!allFree) break
-    }
-
-    if (allFree && slots[sel.minSlot] && selectedLane) {
-      const stationCount = sel.maxSn - sel.minSn + 1
-      const startTime = slots[sel.minSlot]
-      const endMin = timeToMin(startTime) + slotCount * 30
-      const endTime = `${Math.floor(endMin / 60).toString().padStart(2, '0')}:${(endMin % 60).toString().padStart(2, '0')}`
-
-      // Create hold via API
-      try {
-        const res = await fetch('/api/reservations/hold', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            lane_id: selectedLane.id,
-            station_number: sel.minSn,
-            stations_count: stationCount,
-            reservation_date: selectedDate,
-            start_time: startTime,
-            end_time: endTime,
-          }),
-        })
-        const data = await res.json()
-        if (!res.ok) {
-          if (res.status === 409) {
-            alert('Ten slot jest już zajęty lub ktoś go właśnie rezerwuje.')
-            loadReservations()
-          }
-          return
-        }
-        setHoldToken(data.hold_token)
-        setHoldExpiresAt(new Date(data.expires_at))
-        setHoldTimeLeft(data.hold_seconds)
-        setShowExtendPrompt(false)
-        setShowBooking({ stationNumber: sel.minSn, slotTime: startTime })
-        setBookingSlots(slotCount)
-        setBookingStations(stationCount)
-        loadReservations() // reload to show hold in grid
-      } catch {
-        alert('Błąd połączenia z serwerem')
-      }
-    }
-  }
-
-  // Global mouseup listener to end drag (desktop only)
-  useEffect(() => {
-    const onUp = () => {
-      if (isDragging.current) handleDragEnd()
-    }
-    window.addEventListener('mouseup', onUp)
-    return () => window.removeEventListener('mouseup', onUp)
-  }, [slots, slotMap])
-
+  // --- Helper functions kept in component (pure / UI-only) ---
   const isRecreational = (res: Reservation) => res.notes?.startsWith('Strzelanie rekreacyjne')
   const isHold = (res: Reservation) => res.status === 'hold'
 
@@ -560,114 +169,6 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
     }
     return 'Zarezerwowane'
   }
-
-  const handleBook = async (payNow: boolean) => {
-    if (!showBooking || !selectedLane) return
-
-    // Walidacja danych gościa (gdy niezalogowany)
-    if (!member) {
-      if (!guestBooking.full_name || !guestBooking.email || !guestBooking.address || !guestBooking.document) {
-        alert('Podaj imię i nazwisko, email, adres zamieszkania oraz numer dokumentu')
-        return
-      }
-    }
-
-    if (!holdToken) {
-      alert('Rezerwacja wygasła. Wybierz slot ponownie.')
-      setShowBooking(null)
-      loadReservations()
-      return
-    }
-
-    setBookingLoading(true)
-    try {
-      const startMin = timeToMin(showBooking.slotTime)
-      const endMin = startMin + bookingSlots * 30
-      const endH = Math.floor(endMin / 60)
-      const endM = endMin % 60
-      const startTime = showBooking.slotTime
-      const endTime = `${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}`
-      const hours = (bookingSlots * 30) / 60
-      const totalPln = selectedLane.price_per_hour_pln * hours * bookingStations
-
-      // Convert hold → confirmed reservation via API
-      const res = await fetch('/api/reservations/confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          hold_token: holdToken,
-          member_id: member?.id || null,
-          guest_name: member ? (member as any).full_name : guestBooking.full_name,
-          guest_email: !member ? guestBooking.email : undefined,
-          guest_phone: !member ? (guestBooking.phone || null) : undefined,
-          guest_address: !member ? guestBooking.address : undefined,
-          guest_document: !member ? guestBooking.document : undefined,
-          notes: bookingNotes || null,
-          paid: totalPln <= 0,
-          pay_now: payNow,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        alert('Błąd: ' + (data.error || 'Nieznany błąd'))
-        return
-      }
-
-      if (data.redirect_url) {
-        window.location.href = data.redirect_url
-        return
-      }
-
-      setHoldToken(null)
-      setHoldExpiresAt(null)
-      setShowBooking(null)
-      setShowExtendPrompt(false)
-      setBookingNotes('')
-      setBookingSlots(2)
-      setBookingStations(1)
-      setGuestBooking({ full_name: '', email: '', phone: '', address: '', document: '' })
-      loadReservations()
-    } catch (err: any) {
-      alert('Błąd rezerwacji: ' + (err.message || 'Spróbuj ponownie'))
-    } finally {
-      setBookingLoading(false)
-    }
-  }
-
-  const handlePayExisting = async (resId: string) => {
-    setPaymentLoading(resId)
-    try {
-      const payRes = await fetch('/api/reservations/pay', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reservation_id: resId }),
-      })
-      const payData = await payRes.json()
-      if (payData.redirect_url) {
-        window.location.href = payData.redirect_url
-      }
-    } catch {
-      alert('Błąd płatności')
-    } finally {
-      setPaymentLoading(null)
-    }
-  }
-
-  // Rejestrator strzelnicowy oznacza jako opłacone (gotówka)
-  const handleMarkPaid = async (resId: string) => {
-    if (!confirm('Oznaczyć rezerwację jako opłaconą (gotówka)?')) return
-    setPaymentLoading(resId)
-    try {
-      await supabase.from('lane_reservations').update({ paid: true }).eq('id', resId)
-      loadReservations()
-    } catch {
-      alert('Błąd')
-    } finally {
-      setPaymentLoading(null)
-    }
-  }
-
-  const isPast = dateObj < new Date(new Date().toDateString())
 
   // Druk książki wejścia na strzelnicę
   const printEntryLog = () => {
@@ -722,101 +223,6 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
       w.document.write(html)
       w.document.close()
       setTimeout(() => w.print(), 500)
-    }
-  }
-
-  // === On-site recreational booking ===
-  const openOnsiteBooking = async () => {
-    setOnsiteLoading(true)
-    setOnsiteSuccess('')
-    setOnsiteForm({
-      package_id: '', weapon_id: '', instructor_id: '',
-      start_time: '10:00', duration_minutes: '60',
-      ammo_count: '50', price_pln: '0',
-      guest_name: '', guest_phone: '', guest_address: '', guest_document: '', guest_email: '',
-      targets: '', notes: '',
-    })
-    setShowOnsiteBooking(true)
-
-    // Load weapons, packages, instructors
-    const [weaponsRes, pkgsRes, instructorsRes] = await Promise.all([
-      supabase.from('range_weapons').select('id, name, type, caliber, status').eq('status', 'in_stock').order('type').order('name'),
-      supabase.from('shooting_packages').select('id, name, weapon_id, ammo_count, duration_minutes, price_pln').eq('is_active', true).order('name'),
-      supabase.from('members').select('id, full_name').eq('role', 'instructor').eq('is_active', true).order('full_name'),
-    ])
-
-    // Also include admins as instructors
-    const { data: admins } = await supabase.from('members').select('id, full_name').eq('role', 'admin').eq('is_active', true)
-    const allInstructors = [...(instructorsRes.data ?? []), ...(admins ?? [])]
-    const unique = Array.from(new Map(allInstructors.map(i => [i.id, i])).values())
-
-    setOnsiteWeapons((weaponsRes.data ?? []) as RangeWeapon[])
-    setOnsitePackages((pkgsRes.data ?? []) as ShootingPackage[])
-    setOnsiteInstructors(unique as Instructor[])
-    setOnsiteLoading(false)
-  }
-
-  const handlePackageSelect = (pkgId: string) => {
-    const pkg = onsitePackages.find(p => p.id === pkgId)
-    if (pkg) {
-      setOnsiteForm(f => ({
-        ...f,
-        package_id: pkgId,
-        weapon_id: pkg.weapon_id,
-        ammo_count: String(pkg.ammo_count),
-        duration_minutes: String(pkg.duration_minutes),
-        price_pln: String(pkg.price_pln),
-      }))
-    } else {
-      setOnsiteForm(f => ({ ...f, package_id: '' }))
-    }
-  }
-
-  const handleOnsiteSubmit = async () => {
-    if (!member) return
-    if (!onsiteForm.weapon_id || !onsiteForm.instructor_id) {
-      alert('Wybierz broń i instruktora')
-      return
-    }
-    if (!onsiteForm.guest_name || !onsiteForm.guest_address || !onsiteForm.guest_document || !onsiteForm.guest_email) {
-      alert('Podaj imię i nazwisko, adres zamieszkania, numer dokumentu oraz email klienta')
-      return
-    }
-
-    setOnsiteSaving(true)
-    try {
-      const res = await fetch('/api/recreational/onsite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          weapon_id: onsiteForm.weapon_id,
-          instructor_id: onsiteForm.instructor_id,
-          date: selectedDate,
-          start_time: onsiteForm.start_time,
-          duration_minutes: parseInt(onsiteForm.duration_minutes),
-          ammo_count: parseInt(onsiteForm.ammo_count),
-          price_pln: parseFloat(onsiteForm.price_pln),
-          guest_name: onsiteForm.guest_name,
-          guest_phone: onsiteForm.guest_phone,
-          guest_address: onsiteForm.guest_address,
-          guest_document: onsiteForm.guest_document,
-          guest_email: onsiteForm.guest_email,
-          notes: [onsiteForm.targets ? `Tarcze: ${onsiteForm.targets}` : '', onsiteForm.notes].filter(Boolean).join(' | '),
-          registrar_id: member.id,
-          package_id: onsiteForm.package_id || null,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        alert('Błąd: ' + (data.error || 'Nieznany błąd'))
-        return
-      }
-      setOnsiteSuccess(`Zarezerwowano: ${onsiteForm.guest_name}, ${data.weapon_name || 'broń'}, ${onsiteForm.ammo_count} szt. amunicji, ${onsiteForm.price_pln} zł`)
-      loadReservations()
-    } catch (err: any) {
-      alert('Błąd: ' + (err.message || 'Spróbuj ponownie'))
-    } finally {
-      setOnsiteSaving(false)
     }
   }
 
@@ -1171,7 +577,7 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
 
       {/* Modal rezerwacji */}
       {showBooking && selectedLane && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => { releaseHold(); setShowBooking(null) }}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => { releaseHold(); setShowBookingDirect(null) }}>
           <div className="bg-card border border-border rounded-xl max-w-lg w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
             {/* Header — sticky */}
             <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
@@ -1196,7 +602,7 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
                   })()}
                 </p>
               </div>
-              <button onClick={() => { releaseHold(); setShowBooking(null) }} className="p-1.5 rounded-lg hover:bg-background">
+              <button onClick={() => { releaseHold(); setShowBookingDirect(null) }} className="p-1.5 rounded-lg hover:bg-background">
                 <X className="w-5 h-5" />
               </button>
             </div>

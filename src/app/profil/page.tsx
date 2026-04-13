@@ -157,7 +157,7 @@ export default function ProfilePage() {
     }
   }, [member, loading, user])
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleProfileUpdate(e: React.FormEvent) {
     e.preventDefault()
     if (!member) return
     setSaving(true)
@@ -484,7 +484,7 @@ export default function ProfilePage() {
               <Pencil className="w-4 h-4 text-primary" />
               Edytuj profil
             </h2>
-            <form onSubmit={handleSubmit} className="space-y-3">
+            <form onSubmit={handleProfileUpdate} className="space-y-3">
               <Section title="Dane osobowe i kontaktowe" icon={Phone} defaultOpen={true}>
                 <div className="grid grid-cols-2 gap-3">
                   <div>

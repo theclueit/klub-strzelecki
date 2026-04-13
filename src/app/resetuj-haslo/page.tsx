@@ -26,7 +26,7 @@ export default function ResetPasswordPage() {
     })
   }, [supabase.auth])
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handlePasswordReset(e: React.FormEvent) {
     e.preventDefault()
     setError('')
 
@@ -91,7 +91,7 @@ export default function ResetPasswordPage() {
             <p className="text-sm text-muted">Weryfikacja linku resetującego...</p>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handlePasswordReset} className="space-y-5">
             <div>
               <label className="text-sm text-muted block mb-1">Nowe hasło</label>
               <div className="relative">

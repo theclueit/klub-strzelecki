@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { sendRangeRulesEmail } from '@/lib/email'
+import { timeToMin } from '@/lib/date'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
-
-function timeToMin(t: string) {
-  const [h, m] = t.split(':').map(Number)
-  return h * 60 + (m || 0)
-}
 
 // On-site booking by range registrar — custom weapon, ammo, price, instructor
 export async function POST(req: NextRequest) {

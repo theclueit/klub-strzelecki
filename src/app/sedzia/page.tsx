@@ -1,587 +1,83 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
-import { createSupabaseBrowser } from '@/lib/supabase'
-import { useAuth } from '@/components/AuthProvider'
+import { useState, useCallback } from 'react'
 import { Crosshair, Camera, Upload, Check, LogOut, Search, User, Target, AlertTriangle, List, Hash } from 'lucide-react'
 import Link from 'next/link'
 import type { Member } from '@/types/database'
-
-type Step = 'login' | 'select-event' | 'select-member' | 'select-discipline' | 'photo' | 'review' | 'done'
-
-interface AssignedEvent {
-  id: string
-  event_id: string
-  event: { id: string; title: string; start_date: string; end_date: string | null }
-  memberCount?: number
-  scoredCount?: number
-}
-
-interface EventDisciplineRow {
-  id: string
-  discipline_id: string
-  discipline: { id: string; name: string; scoring_type?: string } | null
-}
+import { useJudgeAuth, useQrScanner, useTargetPhoto, useScoreForm } from '@/hooks/judge'
+import type { EventDisciplineRow } from '@/hooks/judge'
 
 export default function JudgePage() {
-  const supabase = createSupabaseBrowser()
-  const { member: authMember, loading: authLoading } = useAuth()
-  const [step, setStep] = useState<Step>('login')
-  const [judge, setJudge] = useState<Member | null>(null)
-  const [autoLoginDone, setAutoLoginDone] = useState(false)
+  const auth = useJudgeAuth()
+  const scoreForm = useScoreForm()
+  const targetPhoto = useTargetPhoto(auth.supabase)
 
-  // Assigned events
-  const [assignedEvents, setAssignedEvents] = useState<AssignedEvent[]>([])
-  const [selectedEventId, setSelectedEventId] = useState<string>('')
-
-
-  // Members & disciplines
-  const [members, setMembers] = useState<Member[]>([])
-  const [eventDisciplines, setEventDisciplines] = useState<EventDisciplineRow[]>([])
   const [selectedMember, setSelectedMember] = useState<Member | null>(null)
   const [selectedDiscipline, setSelectedDiscipline] = useState<EventDisciplineRow | null>(null)
-  const [memberSearch, setMemberSearch] = useState('')
-
-  // Already scored disciplines per member
-  const [scoredDisciplines, setScoredDisciplines] = useState<Map<string, Set<string>>>(new Map())
-
-  // Start number mapping: member_id -> start_number, and reverse
-  const [startNumbers, setStartNumbers] = useState<Map<string, number>>(new Map())
-  const [startNumberInput, setStartNumberInput] = useState('')
-  const [showQrScanner, setShowQrScanner] = useState(false)
-  const qrVideoRef = useRef<HTMLVideoElement>(null)
-  const qrStreamRef = useRef<MediaStream | null>(null)
-
-  // Event settings
-  const [allowTargetPhotos, setAllowTargetPhotos] = useState(true)
-
-  // Photo & AI analysis
-  const [photo, setPhoto] = useState<string | null>(null)
-  const [aiAnalysis, setAiAnalysis] = useState<any>(null)
-  const [aiLoading, setAiLoading] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
-
-  // Result form
-  const [entryMode, setEntryMode] = useState<'quick' | 'shots'>('quick')
-  const [shotsCount, setShotsCount] = useState('10')
-  const [shots, setShots] = useState<string[]>([])
-  const [activeShotIdx, setActiveShotIdx] = useState<number | null>(null)
-  const [totalScore, setTotalScore] = useState('')
-  const [maxScore, setMaxScore] = useState('')
-  const [tensCount, setTensCount] = useState('')
-  const [xsCount, setXsCount] = useState('')
-  const [misses, setMisses] = useState('0')
-  const [comment, setComment] = useState('')
-  const [timeSeconds, setTimeSeconds] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-
-  // Load assigned events for a judge
-  const loadAssignedEvents = useCallback(async (judgeData: Member) => {
-    const { data: ejData } = await supabase
-      .from('event_judges')
-      .select('id, event_id, status, event:events(id, title, start_date, end_date, is_published, allow_target_photos)')
-      .eq('judge_id', judgeData.id)
-
-    const now = new Date()
-    const relevant = ((ejData ?? []) as any[]).filter(ej => {
-      const ev = ej.event
-      if (!ev) return false
-      if (ej.status !== 'pending' && ej.status !== 'confirmed') return false
-      if (!ev.is_published) return false
-      const endDate = ev.end_date || ev.start_date
-      return new Date(endDate) >= new Date(now.toDateString())
-    })
-
-    // Fetch member counts & scored counts for each event
-    const enriched: AssignedEvent[] = await Promise.all(
-      relevant.map(async (ej: any) => {
-        const ev = ej.event as any
-        const [regsRes, resultsRes, edRes] = await Promise.all([
-          supabase.from('event_registrations').select('member_id', { count: 'exact', head: true }).eq('event_id', ev.id).neq('status', 'cancelled'),
-          supabase.from('results').select('member_id, discipline_id').eq('event_id', ev.id),
-          supabase.from('event_disciplines').select('discipline_id').eq('event_id', ev.id),
-        ])
-        const memberCount = regsRes.count ?? 0
-        const discCount = (edRes.data ?? []).length
-        // Count members who have ALL disciplines scored
-        const scored = new Map<string, Set<string>>()
-        for (const r of (resultsRes.data ?? []) as { member_id: string; discipline_id: string | null }[]) {
-          if (!r.discipline_id) continue
-          if (!scored.has(r.member_id)) scored.set(r.member_id, new Set())
-          scored.get(r.member_id)!.add(r.discipline_id)
-        }
-        let fullyScored = 0
-        if (discCount > 0) {
-          scored.forEach(discs => { if (discs.size >= discCount) fullyScored++ })
-        }
-        return { ...ej, memberCount, scoredCount: fullyScored }
-      })
-    )
-
-    setAssignedEvents(enriched)
-    setStep('select-event')
-  }, [supabase])
-
-  // Auto-login — run every time authMember becomes available while on login screen
-  useEffect(() => {
-    if (authLoading || step !== 'login') return
-    if (authMember && (authMember.role === 'judge' || authMember.role === 'admin' || authMember.role === 'superadmin')) {
-      setJudge(authMember)
-      setAutoLoginDone(true)
-
-      loadAssignedEvents(authMember)
-    } else if (!authLoading && !autoLoginDone) {
-      setAutoLoginDone(true)
-    }
-  }, [authMember, authLoading, autoLoginDone, step, loadAssignedEvents])
-
-  async function selectEvent(eventId: string, judgeOverride?: Member) {
-    setSelectedEventId(eventId)
-    const selectedEv = assignedEvents.find(e => (e.event as any).id === eventId)
-    setAllowTargetPhotos((selectedEv?.event as any)?.allow_target_photos ?? true)
-    const j = judgeOverride ?? judge
-    if (j) {
-
-    }
-    const [regsRes, edRes, resultsRes] = await Promise.all([
-      supabase
-        .from('event_registrations')
-        .select('member:members(*), start_number')
-        .eq('event_id', eventId)
-        .neq('status', 'cancelled'),
-      supabase.from('event_disciplines').select('id, discipline_id, discipline:disciplines(id, name, scoring_type)').eq('event_id', eventId),
-      supabase.from('results').select('member_id, discipline_id').eq('event_id', eventId),
-    ])
-
-    const regs = (regsRes.data ?? []) as any[]
-    const registeredMembers = regs
-      .map(r => r.member)
-      .filter(Boolean)
-      .sort((a: Member, b: Member) => a.full_name.localeCompare(b.full_name))
-    setMembers(registeredMembers as Member[])
-
-    // Build start number map
-    const snMap = new Map<string, number>()
-    for (const r of regs) {
-      if (r.member?.id && r.start_number) {
-        snMap.set(r.member.id, r.start_number)
-      }
-    }
-    setStartNumbers(snMap)
-
-    const eds = (edRes.data ?? []) as unknown as EventDisciplineRow[]
-    setEventDisciplines(eds)
-
-    const scored = new Map<string, Set<string>>()
-    for (const r of (resultsRes.data ?? []) as { member_id: string; discipline_id: string | null }[]) {
-      if (!r.discipline_id) continue
-      if (!scored.has(r.member_id)) scored.set(r.member_id, new Set())
-      scored.get(r.member_id)!.add(r.discipline_id)
-    }
-    setScoredDisciplines(scored)
-    setStep('select-member')
-  }
-
-  function getAvailableDisciplines(memberId: string): EventDisciplineRow[] {
-    const scored = scoredDisciplines.get(memberId)
-    if (!scored) return eventDisciplines
-    return eventDisciplines.filter(ed => {
-      return !scored.has(ed.discipline_id)
-    })
-  }
-
-  function canShowPhoto(ed: EventDisciplineRow | null): boolean {
-    return allowTargetPhotos && ed?.discipline?.scoring_type !== 'shotgun'
-  }
 
   function selectMember(m: Member) {
     setSelectedMember(m)
-    const available = getAvailableDisciplines(m.id)
+    const available = auth.getAvailableDisciplines(m.id)
     if (available.length === 1) {
       setSelectedDiscipline(available[0])
-      setStep(canShowPhoto(available[0]) ? 'photo' : 'review')
+      auth.setStep(auth.canShowPhoto(available[0]) ? 'photo' : 'review')
     } else if (available.length === 0) {
       setSelectedDiscipline(null)
-      setStep('photo')
+      auth.setStep('photo')
     } else {
-      setStep('select-discipline')
+      auth.setStep('select-discipline')
     }
   }
 
   function selectDisc(ed: EventDisciplineRow) {
     setSelectedDiscipline(ed)
-    setStep(canShowPhoto(ed) ? 'photo' : 'review')
+    auth.setStep(auth.canShowPhoto(ed) ? 'photo' : 'review')
   }
 
-  function compressImage(dataUrl: string, maxWidth: number, quality: number): Promise<string> {
-    return new Promise((resolve) => {
-      const img = new Image()
-      img.onload = () => {
-        const canvas = document.createElement('canvas')
-        let w = img.width, h = img.height
-        if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth }
-        canvas.width = w; canvas.height = h
-        const ctx = canvas.getContext('2d')!
-        ctx.drawImage(img, 0, 0, w, h)
-        resolve(canvas.toDataURL('image/jpeg', quality))
-      }
-      img.src = dataUrl
-    })
-  }
+  const selectMemberCb = useCallback((m: Member) => selectMember(m), [auth.eventDisciplines, auth.scoredDisciplines])
 
-  function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = async (ev) => {
-      const raw = ev.target?.result as string
-      // Compress: max 1200px wide, 60% quality → ~100-300KB instead of 5-12MB
-      const compressed = await compressImage(raw, 1200, 0.6)
-      setPhoto(compressed)
-      setAiAnalysis(null)
-      setStep('review')
-      // Trigger AI analysis in background
-      analyzeTargetPhoto(compressed)
-    }
-    reader.readAsDataURL(file)
-  }
+  const qr = useQrScanner(auth.members, auth.startNumbers, selectMemberCb)
 
-  async function analyzeTargetPhoto(imageData: string) {
-    setAiLoading(true)
-    try {
-      const res = await fetch('/api/analyze-target', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image: imageData,
-          discipline_name: selectedDiscipline?.discipline?.name ?? null,
-          shots_count: null,
-        }),
-      })
-      const json = await res.json()
-      if (json.ok && json.analysis) {
-        setAiAnalysis(json.analysis)
-      }
-    } catch (err) {
-      console.error('AI analysis failed:', err)
-    } finally {
-      setAiLoading(false)
-    }
-  }
-
-  function applyAiSuggestion() {
-    if (!aiAnalysis) return
-    if (aiAnalysis.total_score !== undefined) setTotalScore(String(aiAnalysis.total_score))
-    if (aiAnalysis.tens_count !== undefined) setTensCount(String(aiAnalysis.tens_count))
-    if (aiAnalysis.xs_count !== undefined) setXsCount(String(aiAnalysis.xs_count))
-    if (aiAnalysis.misses !== undefined) setMisses(String(aiAnalysis.misses))
-    if (aiAnalysis.shots_detected) setMaxScore(String(aiAnalysis.shots_detected * 10))
-  }
-
-  // ---- Shots mode helpers ----
-  function initShots(count: number) {
-    setShots(Array(count).fill(''))
-  }
-
-  function updateShot(index: number, value: string) {
-    // Allow empty, 0-10, or decimal 0.0-10.9
-    value = value.replace(',', '.')
-    const num = parseFloat(value)
-    if (value !== '' && (isNaN(num) || num < 0 || num > 10.9)) return
-    setShots(prev => {
-      const next = [...prev]
-      next[index] = value
-      return next
-    })
-  }
-
-  // Calculate stats from individual shots
-  function calcFromShots(): { total: number; tens: number; xs: number; missCount: number; filledCount: number } {
-    let total = 0, tens = 0, missCount = 0, filledCount = 0
-    for (const s of shots) {
-      if (s === '') continue
-      const val = parseFloat(s)
-      filledCount++
-      total += val
-      if (val >= 10) tens++
-      if (val === 0) missCount++
-    }
-    return { total: Math.round(total * 10) / 10, tens, xs: 0, missCount, filledCount }
-  }
-
-  // ---- Validation ----
-  function getValidationErrors(): string[] {
-    const errors: string[] = []
-    const total = parseFloat(totalScore)
-    const max = parseFloat(maxScore)
-    const tens = parseInt(tensCount) || 0
-    const xs = parseInt(xsCount) || 0
-
-    if (totalScore && maxScore && total > max) {
-      errors.push(`Wynik (${total}) przekracza max (${max})`)
-    }
-    if (xsCount && tensCount && xs > tens) {
-      errors.push(`X-ki (${xs}) nie mogą przekraczać dziesiątek (${tens})`)
-    }
-    if (totalScore && tensCount && tens * 10 > total) {
-      errors.push(`${tens} dziesiątek = min. ${tens * 10} pkt, ale wynik to ${total}`)
-    }
-    if (totalScore && maxScore && max > 0) {
-      const maxTens = Math.floor(max / 10)
-      if (tens > maxTens) {
-        errors.push(`Dziesiątki (${tens}) przekraczają max możliwych (${maxTens})`)
-      }
-    }
-    return errors
-  }
-
-  // Apply shots calculation to form fields
-  function applyShotsCalc() {
-    const calc = calcFromShots()
-    if (calc.filledCount > 0) {
-      setTotalScore(String(calc.total))
-      setTensCount(String(calc.tens))
-      setMisses(String(calc.missCount))
-      const sc = parseInt(shotsCount) || shots.length
-      setMaxScore(String(sc * 10))
-    }
-  }
-
-  // Upload photo in background and update result row
-  async function uploadPhotoInBackground(resultMemberId: string, photoData: string) {
-    try {
-      const fileName = `targets/${resultMemberId}/${Date.now()}.jpg`
-      const base64 = photoData.split(',')[1]
-      const byteCharacters = atob(base64)
-      const byteNumbers = new Array(byteCharacters.length)
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i)
-      }
-      const blob = new Blob([new Uint8Array(byteNumbers)], { type: 'image/jpeg' })
-      const { data: uploadData } = await supabase.storage.from('targets').upload(fileName, blob)
-      if (uploadData) {
-        const url = supabase.storage.from('targets').getPublicUrl(fileName).data.publicUrl
-        // Update the most recent result for this member
-        await supabase.from('results')
-          .update({ target_image_url: url })
-          .eq('member_id', resultMemberId)
-          .order('created_at', { ascending: false })
-          .limit(1)
-      }
-    } catch (err) {
-      console.error('Photo upload failed:', err)
-    }
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    // Ensure shots calc is applied before submit
-    if (entryMode === 'shots') applyShotsCalc()
-    if (!selectedMember || !totalScore) return
-
-    const errors = getValidationErrors()
-    if (errors.length > 0) {
-      if (!window.confirm(`Uwaga — znaleziono problemy:\n\n${errors.join('\n')}\n\nCzy mimo to zapisać wynik?`)) {
-        return
-      }
-    }
-
-    setSubmitting(true)
-
+  function handleScoreSuccess() {
     const disciplineId = selectedDiscipline?.discipline_id ?? selectedDiscipline?.discipline?.id ?? null
-
-    // Build shots array from individual entries
-    const shotsArray = entryMode === 'shots' && shots.some(s => s !== '')
-      ? shots.map(s => s === '' ? 0 : parseFloat(s))
-      : null
-
-    // Save via server API (avoids Safari cross-origin fetch issues)
-    const payload = {
-      member_id: selectedMember.id,
-      judge_id: judge!.id,
-      event_id: selectedEventId || null,
-      discipline_id: disciplineId,
-      total_score: totalScore,
-      max_score: maxScore || null,
-      tens_count: tensCount || '0',
-      xs_count: xsCount || '0',
-      misses: misses || '0',
-      shots: shotsArray,
-      judge_comment: comment || null,
-      time_seconds: timeSeconds || null,
-    }
-
-    let lastErr = ''
-    let lastCode = ''
-    let ok = false
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const res = await fetch('/api/results', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-        const json = await res.json()
-        if (res.ok) { ok = true; break }
-        lastErr = json.error || 'Nieznany błąd'
-        lastCode = json.code || ''
-        if (lastCode === '23505') break
-      } catch (e: any) {
-        lastErr = e.message || 'Błąd sieci'
-      }
-      await new Promise(r => setTimeout(r, 500 * (attempt + 1)))
-    }
-
-    setSubmitting(false)
-    if (!ok) {
-      if (lastCode === '23505') {
-        alert('Wynik dla tej dyscypliny został już zapisany dla tego zawodnika.')
-      } else {
-        alert('Błąd zapisu: ' + lastErr)
-      }
-      return
-    }
-
-    if (disciplineId) {
-      setScoredDisciplines(prev => {
+    if (disciplineId && selectedMember) {
+      auth.setScoredDisciplines(prev => {
         const next = new Map(prev)
-        const memberId = selectedMember.id
-        if (!next.has(memberId)) next.set(memberId, new Set())
-        next.get(memberId)!.add(disciplineId)
+        if (!next.has(selectedMember.id)) next.set(selectedMember.id, new Set())
+        next.get(selectedMember.id)!.add(disciplineId)
         return next
       })
     }
-
-    // Upload photo in background — don't block the UI
-    if (photo && selectedMember) {
-      uploadPhotoInBackground(selectedMember.id, photo)
+    if (targetPhoto.photo && selectedMember) {
+      targetPhoto.uploadPhotoInBackground(selectedMember.id, targetPhoto.photo)
     }
-
-    setStep('done')
-  }
-
-  function resetForm() {
-    setPhoto(null)
-    setAiAnalysis(null)
-    setAiLoading(false)
-    setEntryMode('quick')
-    setShotsCount('10')
-    setShots([])
-    setActiveShotIdx(null)
-    setTotalScore('')
-    setMaxScore('')
-    setTensCount('')
-    setXsCount('')
-    setMisses('0')
-    setTimeSeconds('')
-    setComment('')
+    auth.setStep('done')
   }
 
   function reset() {
     setSelectedMember(null)
     setSelectedDiscipline(null)
-    setMemberSearch('')
-    setStartNumberInput('')
-    stopQrScanner()
-    resetForm()
-    setStep('select-member')
+    qr.setMemberSearch('')
+    qr.setStartNumberInput('')
+    qr.stopQrScanner()
+    scoreForm.resetForm()
+    targetPhoto.resetPhoto()
+    auth.setStep('select-member')
   }
 
-  // Find member by start number and auto-select
-  function findByStartNumber(num: number) {
-    const memberId = Array.from(startNumbers.entries()).find(([, sn]) => sn === num)?.[0]
-    if (!memberId) return
-    const m = members.find(m => m.id === memberId)
-    if (m) selectMember(m)
+  function resetForm() {
+    scoreForm.resetForm()
+    targetPhoto.resetPhoto()
   }
-
-  function handleStartNumberSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    const num = parseInt(startNumberInput)
-    if (!num) return
-    findByStartNumber(num)
-    setStartNumberInput('')
-  }
-
-  // QR Scanner
-  async function startQrScanner() {
-    setShowQrScanner(true)
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-      qrStreamRef.current = stream
-      if (qrVideoRef.current) {
-        qrVideoRef.current.srcObject = stream
-        qrVideoRef.current.play()
-      }
-      // Poll for QR codes using BarcodeDetector (available in Chrome/Safari)
-      if ('BarcodeDetector' in window) {
-        const detector = new (window as any).BarcodeDetector({ formats: ['qr_code'] })
-        const scanLoop = async () => {
-          if (!qrVideoRef.current || !qrStreamRef.current) return
-          try {
-            const codes = await detector.detect(qrVideoRef.current)
-            if (codes.length > 0) {
-              const value = codes[0].rawValue
-              handleQrResult(value)
-              return
-            }
-          } catch {}
-          if (qrStreamRef.current) requestAnimationFrame(scanLoop)
-        }
-        // Wait for video to be ready
-        qrVideoRef.current?.addEventListener('loadeddata', () => {
-          requestAnimationFrame(scanLoop)
-        }, { once: true })
-      }
-    } catch (err) {
-      console.error('Camera error:', err)
-      setShowQrScanner(false)
-    }
-  }
-
-  function stopQrScanner() {
-    if (qrStreamRef.current) {
-      qrStreamRef.current.getTracks().forEach(t => t.stop())
-      qrStreamRef.current = null
-    }
-    setShowQrScanner(false)
-  }
-
-  function handleQrResult(value: string) {
-    stopQrScanner()
-    // QR format: "START-{eventId}-{startNumber}" or just a number
-    const startMatch = value.match(/START-[^-]+-(\d+)/)
-    if (startMatch) {
-      findByStartNumber(parseInt(startMatch[1]))
-      return
-    }
-    const num = parseInt(value)
-    if (!isNaN(num)) {
-      findByStartNumber(num)
-      return
-    }
-    // Try matching by member QR code or license
-    const m = members.find(m => m.qr_code === value || m.license_number === value)
-    if (m) selectMember(m)
-  }
-
-  const filteredMembers = members.filter(m =>
-    m.full_name.toLowerCase().includes(memberSearch.toLowerCase()) ||
-    m.license_number?.toLowerCase().includes(memberSearch.toLowerCase()) ||
-    m.qr_code?.toLowerCase().includes(memberSearch.toLowerCase()) ||
-    (startNumbers.get(m.id)?.toString() ?? '').includes(memberSearch)
-  )
 
   const inputClass = "w-full bg-background border border-border rounded-lg px-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
   const inputSmClass = "w-full bg-background border border-border rounded-lg px-3 py-2 text-foreground text-sm placeholder:text-muted focus:outline-none focus:border-primary"
 
-  const selectedEventTitle = assignedEvents.find(e => (e.event as any).id === selectedEventId)?.event?.title
-
-  const validationErrors = getValidationErrors()
+  const validationErrors = scoreForm.getValidationErrors()
 
   // LOGIN
-  if (step === 'login') {
-    if (authLoading || !autoLoginDone || (authMember && (authMember.role === 'judge' || authMember.role === 'admin' || authMember.role === 'superadmin'))) {
+  if (auth.step === 'login') {
+    if (auth.authLoading || !auth.autoLoginDone || (auth.authMember && (auth.authMember.role === 'judge' || auth.authMember.role === 'admin' || auth.authMember.role === 'superadmin'))) {
       return <div className="p-16 text-center text-muted">Ładowanie...</div>
     }
     return (
@@ -603,27 +99,27 @@ export default function JudgePage() {
   }
 
   // SELECT EVENT
-  if (step === 'select-event') {
+  if (auth.step === 'select-event') {
     return (
       <div className="max-w-2xl mx-auto px-4 py-12">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">Wybierz zawody</h1>
-            <p className="text-sm text-muted">Zalogowany: {judge?.full_name}</p>
+            <p className="text-sm text-muted">Zalogowany: {auth.judge?.full_name}</p>
           </div>
           <Link href="/" className="text-muted hover:text-foreground transition-colors" title="Wróć na stronę główną">
             <LogOut className="w-5 h-5" />
           </Link>
         </div>
 
-        {assignedEvents.length === 0 ? (
+        {auth.assignedEvents.length === 0 ? (
           <div className="bg-card border border-border rounded-xl p-8 text-center">
             <p className="text-muted mb-2">Nie masz przypisanych aktualnych zawodów.</p>
             <p className="text-sm text-muted">Skontaktuj się z administratorem, aby zostać przypisanym do wydarzenia.</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {assignedEvents.map(ej => {
+            {auth.assignedEvents.map(ej => {
               const ev = ej.event as any
               const isToday = new Date(ev.start_date).toDateString() === new Date().toDateString()
               const mc = ej.memberCount ?? 0
@@ -632,7 +128,7 @@ export default function JudgePage() {
               return (
                 <button
                   key={ej.id}
-                  onClick={() => selectEvent(ev.id)}
+                  onClick={() => auth.selectEvent(ev.id)}
                   className={`w-full bg-card border rounded-xl p-5 transition-colors text-left ${allDone ? 'border-success/30 opacity-60' : 'border-border hover:border-primary/30'}`}
                 >
                   <div className="flex items-center justify-between">
@@ -671,16 +167,16 @@ export default function JudgePage() {
   }
 
   // SELECT MEMBER
-  if (step === 'select-member') {
+  if (auth.step === 'select-member') {
     return (
       <div className="max-w-2xl mx-auto px-4 py-12">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">Wybierz zawodnika</h1>
-            <p className="text-sm text-muted">{judge?.full_name} &middot; {selectedEventTitle}</p>
+            <p className="text-sm text-muted">{auth.judge?.full_name} &middot; {auth.selectedEventTitle}</p>
           </div>
           <div className="flex gap-2">
-            <button onClick={() => setStep('select-event')} className="text-sm text-muted hover:text-foreground transition-colors px-3 py-1 border border-border rounded-lg">
+            <button onClick={() => auth.setStep('select-event')} className="text-sm text-muted hover:text-foreground transition-colors px-3 py-1 border border-border rounded-lg">
               Zmień zawody
             </button>
             <Link href="/" className="text-muted hover:text-foreground transition-colors" title="Wróć na stronę główną">
@@ -692,14 +188,14 @@ export default function JudgePage() {
         {/* Quick entry: start number or QR scan */}
         <div className="bg-card border border-primary/30 rounded-xl p-4 mb-4">
           <div className="flex gap-2">
-            <form onSubmit={handleStartNumberSubmit} className="flex-1 flex gap-2">
+            <form onSubmit={qr.handleStartNumberSubmit} className="flex-1 flex gap-2">
               <div className="relative flex-1">
                 <Hash className="w-4 h-4 text-muted absolute left-3 top-3" />
                 <input
                   type="number"
                   inputMode="numeric"
-                  value={startNumberInput}
-                  onChange={e => setStartNumberInput(e.target.value)}
+                  value={qr.startNumberInput}
+                  onChange={e => qr.setStartNumberInput(e.target.value)}
                   placeholder="Nr startowy"
                   className="w-full bg-background border border-border rounded-lg pl-9 pr-4 py-2.5 text-foreground placeholder:text-muted focus:outline-none focus:border-primary text-lg font-mono"
                 />
@@ -709,19 +205,19 @@ export default function JudgePage() {
               </button>
             </form>
             <button
-              onClick={showQrScanner ? stopQrScanner : startQrScanner}
+              onClick={qr.showQrScanner ? qr.stopQrScanner : qr.startQrScanner}
               className={`px-4 py-2.5 border rounded-lg transition-colors flex items-center gap-2 ${
-                showQrScanner ? 'border-danger text-danger' : 'border-border text-foreground hover:border-primary/30'
+                qr.showQrScanner ? 'border-danger text-danger' : 'border-border text-foreground hover:border-primary/30'
               }`}
             >
               <Camera className="w-5 h-5" />
-              <span className="text-sm hidden sm:inline">{showQrScanner ? 'Zamknij' : 'Skanuj QR'}</span>
+              <span className="text-sm hidden sm:inline">{qr.showQrScanner ? 'Zamknij' : 'Skanuj QR'}</span>
             </button>
           </div>
 
-          {showQrScanner && (
+          {qr.showQrScanner && (
             <div className="mt-3">
-              <video ref={qrVideoRef} className="w-full rounded-lg border border-border" style={{ maxHeight: 240 }} playsInline muted />
+              <video ref={qr.qrVideoRef} className="w-full rounded-lg border border-border" style={{ maxHeight: 240 }} playsInline muted />
               <p className="text-xs text-muted mt-1 text-center">Skieruj kamerę na kod QR zawodnika</p>
             </div>
           )}
@@ -731,30 +227,30 @@ export default function JudgePage() {
           <Search className="w-5 h-5 text-muted absolute left-3 top-3" />
           <input
             type="text"
-            value={memberSearch}
-            onChange={e => setMemberSearch(e.target.value)}
+            value={qr.memberSearch}
+            onChange={e => qr.setMemberSearch(e.target.value)}
             placeholder="Szukaj po nazwisku, licencji, numerze startowym..."
             className="w-full bg-card border border-border rounded-lg pl-10 pr-4 py-3 text-foreground placeholder:text-muted focus:outline-none focus:border-primary"
           />
         </div>
 
-        {members.length === 0 ? (
+        {auth.members.length === 0 ? (
           <div className="bg-card border border-border rounded-xl p-8 text-center">
             <User className="w-10 h-10 text-muted mx-auto mb-3" />
             <p className="text-muted font-medium mb-1">Brak zawodników do oceny</p>
             <p className="text-sm text-muted">Nie ma zarejestrowanych zawodników na te zawody.</p>
           </div>
-        ) : filteredMembers.length === 0 ? (
+        ) : qr.filteredMembers.length === 0 ? (
           <div className="bg-card border border-border rounded-xl p-6 text-center">
-            <p className="text-muted">Brak wyników dla &ldquo;{memberSearch}&rdquo;</p>
+            <p className="text-muted">Brak wyników dla &ldquo;{qr.memberSearch}&rdquo;</p>
           </div>
         ) : null}
 
         <div className="space-y-2">
-          {filteredMembers.map(m => {
-            const available = getAvailableDisciplines(m.id)
-            const allDone = eventDisciplines.length > 0 && available.length === 0
-            const sn = startNumbers.get(m.id)
+          {qr.filteredMembers.map(m => {
+            const available = auth.getAvailableDisciplines(m.id)
+            const allDone = auth.eventDisciplines.length > 0 && available.length === 0
+            const sn = auth.startNumbers.get(m.id)
             return (
               <button
                 key={m.id}
@@ -776,9 +272,9 @@ export default function JudgePage() {
                     <Check className="w-3 h-3" />
                     Wszystkie
                   </span>
-                ) : eventDisciplines.length > 0 && available.length < eventDisciplines.length ? (
+                ) : auth.eventDisciplines.length > 0 && available.length < auth.eventDisciplines.length ? (
                   <span className="text-xs text-muted flex-shrink-0">
-                    {eventDisciplines.length - available.length}/{eventDisciplines.length}
+                    {auth.eventDisciplines.length - available.length}/{auth.eventDisciplines.length}
                   </span>
                 ) : null}
               </button>
@@ -790,17 +286,17 @@ export default function JudgePage() {
   }
 
   // SELECT DISCIPLINE
-  if (step === 'select-discipline') {
-    const available = selectedMember ? getAvailableDisciplines(selectedMember.id) : []
+  if (auth.step === 'select-discipline') {
+    const available = selectedMember ? auth.getAvailableDisciplines(selectedMember.id) : []
     return (
       <div className="max-w-2xl mx-auto px-4 py-12">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold">Wybierz dyscyplinę</h1>
-            <p className="text-sm text-muted">{selectedMember?.full_name} &middot; {selectedEventTitle}</p>
+            <p className="text-sm text-muted">{selectedMember?.full_name} &middot; {auth.selectedEventTitle}</p>
           </div>
           <button
-            onClick={() => { setSelectedMember(null); setStep('select-member') }}
+            onClick={() => { setSelectedMember(null); auth.setStep('select-member') }}
             className="text-sm text-muted hover:text-foreground transition-colors px-3 py-1 border border-border rounded-lg"
           >
             Zmień zawodnika
@@ -822,11 +318,11 @@ export default function JudgePage() {
           ))}
         </div>
 
-        {eventDisciplines.length > available.length && (
+        {auth.eventDisciplines.length > available.length && (
           <div className="mt-6">
             <p className="text-xs text-muted mb-2">Wyniki zapisane:</p>
             <div className="flex flex-wrap gap-2">
-              {eventDisciplines
+              {auth.eventDisciplines
                 .filter(ed => !available.includes(ed))
                 .map(ed => (
                   <span key={ed.id} className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full bg-success/10 text-success">
@@ -842,7 +338,7 @@ export default function JudgePage() {
   }
 
   // PHOTO
-  if (step === 'photo') {
+  if (auth.step === 'photo') {
     return (
       <div className="max-w-md mx-auto px-4 py-12">
         <div className="bg-card border border-border rounded-xl p-8 text-center">
@@ -853,27 +349,27 @@ export default function JudgePage() {
 
           <h3 className="text-lg font-semibold mb-4">Zdjęcie tarczy (opcjonalne)</h3>
 
-          <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handlePhotoChange} className="hidden" />
+          <input ref={targetPhoto.fileRef} type="file" accept="image/*" capture="environment" onChange={e => targetPhoto.handlePhotoChange(e, selectedDiscipline?.discipline?.name ?? null, () => auth.setStep('review'))} className="hidden" />
 
           <div className="space-y-3">
-            <button onClick={() => fileRef.current?.click()} className="w-full bg-primary text-background font-semibold py-3 rounded-lg hover:bg-primary-dark transition-colors flex items-center justify-center gap-2">
+            <button onClick={() => targetPhoto.fileRef.current?.click()} className="w-full bg-primary text-background font-semibold py-3 rounded-lg hover:bg-primary-dark transition-colors flex items-center justify-center gap-2">
               <Camera className="w-5 h-5" />
               Zrób zdjęcie tarczy
             </button>
             <button onClick={() => {
-              setEntryMode('shots')
-              if (shots.length === 0) initShots(parseInt(shotsCount) || 10)
-              setActiveShotIdx(0)
-              setStep('review')
+              scoreForm.setEntryMode('shots')
+              if (scoreForm.shots.length === 0) scoreForm.initShots(parseInt(scoreForm.shotsCount) || 10)
+              scoreForm.setActiveShotIdx(0)
+              auth.setStep('review')
             }} className="w-full border border-border text-foreground font-semibold py-3 rounded-lg hover:bg-card-hover transition-colors">
               Pomiń — wpisz wynik ręcznie
             </button>
             <button onClick={() => {
-              if (selectedMember && getAvailableDisciplines(selectedMember.id).length > 1) {
-                setStep('select-discipline')
+              if (selectedMember && auth.getAvailableDisciplines(selectedMember.id).length > 1) {
+                auth.setStep('select-discipline')
               } else {
                 setSelectedMember(null)
-                setStep('select-member')
+                auth.setStep('select-member')
               }
             }} className="text-sm text-muted hover:text-foreground transition-colors">
               Wróć
@@ -885,8 +381,8 @@ export default function JudgePage() {
   }
 
   // REVIEW & SUBMIT
-  if (step === 'review') {
-    const shotsCalc = entryMode === 'shots' ? calcFromShots() : null
+  if (auth.step === 'review') {
+    const shotsCalc = scoreForm.entryMode === 'shots' ? scoreForm.calcFromShots() : null
     const isShotgun = selectedDiscipline?.discipline?.scoring_type === 'shotgun'
 
     return (
@@ -900,40 +396,40 @@ export default function JudgePage() {
             </div>
           </div>
 
-          {photo && (
+          {targetPhoto.photo && (
             <div className="mb-4">
-              <img src={photo} alt="Tarcza" className="w-full rounded-lg border border-border" />
-              {aiLoading && (
+              <img src={targetPhoto.photo} alt="Tarcza" className="w-full rounded-lg border border-border" />
+              {targetPhoto.aiLoading && (
                 <div className="mt-2 text-sm text-muted flex items-center gap-2">
                   <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
                   Analiza AI tarczy...
                 </div>
               )}
-              {aiAnalysis && !aiLoading && (
+              {targetPhoto.aiAnalysis && !targetPhoto.aiLoading && (
                 <div className="mt-3 bg-primary/5 border border-primary/20 rounded-lg p-3">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-sm font-semibold text-primary">Sugestia AI</span>
                     <span className={`text-xs px-2 py-0.5 rounded-full ${
-                      aiAnalysis.confidence === 'high' ? 'bg-success/20 text-success' :
-                      aiAnalysis.confidence === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
+                      targetPhoto.aiAnalysis.confidence === 'high' ? 'bg-success/20 text-success' :
+                      targetPhoto.aiAnalysis.confidence === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
                       'bg-danger/20 text-danger'
                     }`}>
-                      {aiAnalysis.confidence === 'high' ? 'Wysoka pewność' :
-                       aiAnalysis.confidence === 'medium' ? 'Średnia pewność' : 'Niska pewność'}
+                      {targetPhoto.aiAnalysis.confidence === 'high' ? 'Wysoka pewność' :
+                       targetPhoto.aiAnalysis.confidence === 'medium' ? 'Średnia pewność' : 'Niska pewność'}
                     </span>
                   </div>
-                  {aiAnalysis.total_score !== undefined && (
-                    <div className="text-sm mb-1">Wynik: <span className="font-mono font-bold">{aiAnalysis.total_score}</span></div>
+                  {targetPhoto.aiAnalysis.total_score !== undefined && (
+                    <div className="text-sm mb-1">Wynik: <span className="font-mono font-bold">{targetPhoto.aiAnalysis.total_score}</span></div>
                   )}
-                  {aiAnalysis.shots_detected !== undefined && (
-                    <div className="text-sm mb-1">Trafienia: {aiAnalysis.shots_detected} | 10ki: {aiAnalysis.tens_count ?? 0} | Pudła: {aiAnalysis.misses ?? 0}</div>
+                  {targetPhoto.aiAnalysis.shots_detected !== undefined && (
+                    <div className="text-sm mb-1">Trafienia: {targetPhoto.aiAnalysis.shots_detected} | 10ki: {targetPhoto.aiAnalysis.tens_count ?? 0} | Pudła: {targetPhoto.aiAnalysis.misses ?? 0}</div>
                   )}
-                  {aiAnalysis.notes && (
-                    <div className="text-xs text-muted mt-1">{aiAnalysis.notes}</div>
+                  {targetPhoto.aiAnalysis.notes && (
+                    <div className="text-xs text-muted mt-1">{targetPhoto.aiAnalysis.notes}</div>
                   )}
                   <button
                     type="button"
-                    onClick={applyAiSuggestion}
+                    onClick={() => scoreForm.applyAiSuggestion(targetPhoto.aiAnalysis)}
                     className="mt-2 w-full text-sm px-3 py-1.5 bg-primary text-background rounded-lg hover:bg-primary-dark transition-colors font-medium"
                   >
                     Zastosuj sugestię AI
@@ -946,20 +442,18 @@ export default function JudgePage() {
           {/* === SHOTGUN MODE === */}
           {isShotgun ? (
             <form className="space-y-4">
-              {/* Time input - main field */}
               <div>
                 <label className="text-sm text-muted mb-1 block">Czas surowy (sekundy)</label>
                 <input
                   type="text"
                   inputMode="decimal"
-                  value={timeSeconds}
-                  onChange={e => setTimeSeconds(e.target.value.replace(',', '.'))}
+                  value={scoreForm.timeSeconds}
+                  onChange={e => scoreForm.setTimeSeconds(e.target.value.replace(',', '.'))}
                   placeholder="np. 4.32"
                   className="w-full bg-background border border-border rounded-lg px-4 py-3 text-2xl text-center font-mono focus:outline-none focus:border-primary"
                 />
               </div>
 
-              {/* Misses */}
               <div>
                 <label className="text-sm text-muted mb-2 block">Pudła (za każde +5 sekund)</label>
                 <div className="flex gap-2 justify-center">
@@ -967,9 +461,9 @@ export default function JudgePage() {
                     <button
                       key={n}
                       type="button"
-                      onClick={() => setMisses(String(n))}
+                      onClick={() => scoreForm.setMisses(String(n))}
                       className={`w-12 h-12 rounded-xl border-2 text-lg font-bold transition-all ${
-                        parseInt(misses) === n
+                        parseInt(scoreForm.misses) === n
                           ? n === 0 ? 'bg-green-500/25 border-green-500 text-green-400' : 'bg-danger/25 border-danger text-danger'
                           : 'bg-background border-border text-muted'
                       }`}
@@ -980,97 +474,43 @@ export default function JudgePage() {
                 </div>
               </div>
 
-              {/* Calculated result */}
-              {timeSeconds && (
+              {scoreForm.timeSeconds && (
                 <div className="p-4 rounded-lg bg-background border border-border text-center">
                   <div className="grid grid-cols-3 gap-3 text-sm">
                     <div>
                       <div className="text-xs text-muted mb-1">Czas</div>
-                      <div className="font-mono font-bold">{parseFloat(timeSeconds).toFixed(2)}s</div>
+                      <div className="font-mono font-bold">{parseFloat(scoreForm.timeSeconds).toFixed(2)}s</div>
                     </div>
                     <div>
                       <div className="text-xs text-muted mb-1">Kara</div>
-                      <div className="font-mono font-bold text-danger">+{(parseInt(misses) || 0) * 5}s</div>
+                      <div className="font-mono font-bold text-danger">+{(parseInt(scoreForm.misses) || 0) * 5}s</div>
                     </div>
                     <div>
                       <div className="text-xs text-muted mb-1">Wynik</div>
                       <div className="font-mono font-bold text-lg text-primary">
-                        {(parseFloat(timeSeconds) + (parseInt(misses) || 0) * 5).toFixed(2)}s
+                        {(parseFloat(scoreForm.timeSeconds) + (parseInt(scoreForm.misses) || 0) * 5).toFixed(2)}s
                       </div>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Comment */}
               <div>
                 <label className="text-sm text-muted mb-1 block">Komentarz sędziego</label>
-                <textarea rows={2} value={comment} onChange={e => setComment(e.target.value)} placeholder="Uwagi..." className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-primary resize-none" />
+                <textarea rows={2} value={scoreForm.comment} onChange={e => scoreForm.setComment(e.target.value)} placeholder="Uwagi..." className="w-full bg-background border border-border rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-primary resize-none" />
               </div>
 
               <button
                 type="button"
-                disabled={submitting || !timeSeconds}
-                onClick={async () => {
-                  if (submitting || !selectedMember || !timeSeconds) return
-                  const rawTime = parseFloat(timeSeconds)
-                  const missCount = parseInt(misses) || 0
-                  const finalTime = rawTime + missCount * 5
-                  setSubmitting(true)
-
-                  const disciplineId = selectedDiscipline?.discipline_id ?? selectedDiscipline?.discipline?.id ?? null
-                  const shotgunPayload = {
-                    member_id: selectedMember.id,
-                    judge_id: judge!.id,
-                    event_id: selectedEventId || null,
-                    discipline_id: disciplineId,
-                    total_score: finalTime,
-                    max_score: 5,
-                    tens_count: 0, xs_count: 0,
-                    misses: missCount,
-                    shots: null,
-                    judge_comment: comment || null,
-                    time_seconds: rawTime,
-                  }
-                  let sgOk = false
-                  let sgErr = '', sgCode = ''
-                  for (let attempt = 0; attempt < 3; attempt++) {
-                    try {
-                      const res = await fetch('/api/results', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(shotgunPayload),
-                      })
-                      const json = await res.json()
-                      if (res.ok) { sgOk = true; break }
-                      sgErr = json.error || 'Nieznany błąd'
-                      sgCode = json.code || ''
-                      if (sgCode === '23505') break
-                    } catch (e: any) {
-                      sgErr = e.message || 'Błąd sieci'
-                    }
-                    await new Promise(r => setTimeout(r, 500 * (attempt + 1)))
-                  }
-                  setSubmitting(false)
-                  if (!sgOk) { alert(sgCode === '23505' ? 'Wynik już zapisany dla tej dyscypliny.' : 'Błąd zapisu: ' + sgErr); return }
-                  if (disciplineId) {
-                    setScoredDisciplines(prev => {
-                      const next = new Map(prev)
-                      if (!next.has(selectedMember.id)) next.set(selectedMember.id, new Set())
-                      next.get(selectedMember.id)!.add(disciplineId)
-                      return next
-                    })
-                  }
-                  // Upload photo in background
-                  if (photo && selectedMember) {
-                    uploadPhotoInBackground(selectedMember.id, photo)
-                  }
-                  setStep('done')
+                disabled={scoreForm.submitting || !scoreForm.timeSeconds}
+                onClick={() => {
+                  if (!selectedMember || !auth.judge) return
+                  scoreForm.submitShotgunScore(selectedMember, auth.judge, auth.selectedEventId, selectedDiscipline, handleScoreSuccess)
                 }}
                 className="w-full bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl py-3 font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
               >
                 <Upload className="w-4 h-4" />
-                {submitting ? 'Zapisywanie...' : `Zapisz wynik (${timeSeconds ? (parseFloat(timeSeconds) + (parseInt(misses) || 0) * 5).toFixed(2) : '0'}s)`}
+                {scoreForm.submitting ? 'Zapisywanie...' : `Zapisz wynik (${scoreForm.timeSeconds ? (parseFloat(scoreForm.timeSeconds) + (parseInt(scoreForm.misses) || 0) * 5).toFixed(2) : '0'}s)`}
               </button>
             </form>
           ) : (
@@ -1079,9 +519,9 @@ export default function JudgePage() {
           <div className="flex bg-background rounded-lg border border-border p-1 mb-5">
             <button
               type="button"
-              onClick={() => setEntryMode('quick')}
+              onClick={() => scoreForm.setEntryMode('quick')}
               className={`flex-1 flex items-center justify-center gap-1.5 text-sm py-2 rounded-md transition-colors ${
-                entryMode === 'quick' ? 'bg-primary/10 text-primary font-medium' : 'text-muted hover:text-foreground'
+                scoreForm.entryMode === 'quick' ? 'bg-primary/10 text-primary font-medium' : 'text-muted hover:text-foreground'
               }`}
             >
               <Hash className="w-3.5 h-3.5" />
@@ -1090,11 +530,11 @@ export default function JudgePage() {
             <button
               type="button"
               onClick={() => {
-                setEntryMode('shots')
-                if (shots.length === 0) initShots(parseInt(shotsCount) || 10)
+                scoreForm.setEntryMode('shots')
+                if (scoreForm.shots.length === 0) scoreForm.initShots(parseInt(scoreForm.shotsCount) || 10)
               }}
               className={`flex-1 flex items-center justify-center gap-1.5 text-sm py-2 rounded-md transition-colors ${
-                entryMode === 'shots' ? 'bg-primary/10 text-primary font-medium' : 'text-muted hover:text-foreground'
+                scoreForm.entryMode === 'shots' ? 'bg-primary/10 text-primary font-medium' : 'text-muted hover:text-foreground'
               }`}
             >
               <List className="w-3.5 h-3.5" />
@@ -1102,10 +542,14 @@ export default function JudgePage() {
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={e => {
+            e.preventDefault()
+            if (!selectedMember || !auth.judge) return
+            scoreForm.submitScore(selectedMember, auth.judge, auth.selectedEventId, selectedDiscipline, handleScoreSuccess)
+          }} className="space-y-4">
 
             {/* ---- SHOTS MODE ---- */}
-            {entryMode === 'shots' && (
+            {scoreForm.entryMode === 'shots' && (
               <div>
                 <div className="flex items-center justify-between mb-3">
                   <label className="text-sm text-muted">Liczba strzałów</label>
@@ -1115,11 +559,11 @@ export default function JudgePage() {
                         key={n}
                         type="button"
                         onClick={() => {
-                          setShotsCount(String(n))
-                          initShots(n)
+                          scoreForm.setShotsCount(String(n))
+                          scoreForm.initShots(n)
                         }}
                         className={`text-xs px-2 py-1 rounded-md border transition-colors ${
-                          parseInt(shotsCount) === n
+                          parseInt(scoreForm.shotsCount) === n
                             ? 'border-primary bg-primary/10 text-primary'
                             : 'border-border text-muted hover:text-foreground'
                         }`}
@@ -1130,11 +574,10 @@ export default function JudgePage() {
                   </div>
                 </div>
 
-                {/* Shots grid - grouped in series of 10 */}
                 <p className="text-xs text-muted mb-2">Kliknij strzał i wybierz punkty (0-10):</p>
                 <div className="space-y-3">
-                  {Array.from({ length: Math.ceil(shots.length / 10) }, (_, seriesIdx) => {
-                    const seriesShots = shots.slice(seriesIdx * 10, (seriesIdx + 1) * 10)
+                  {Array.from({ length: Math.ceil(scoreForm.shots.length / 10) }, (_, seriesIdx) => {
+                    const seriesShots = scoreForm.shots.slice(seriesIdx * 10, (seriesIdx + 1) * 10)
                     const seriesTotal = seriesShots.reduce((s, v) => s + (v === '' ? 0 : parseFloat(v)), 0)
                     const seriesTens = seriesShots.filter(v => v !== '' && parseFloat(v) >= 10).length
                     return (
@@ -1150,7 +593,6 @@ export default function JudgePage() {
                           {seriesShots.map((val, shotIdx) => {
                             const globalIdx = seriesIdx * 10 + shotIdx
                             const numVal = val === '' ? null : parseFloat(val)
-                            // Color by score value
                             let cellClass = 'bg-background border-border text-muted'
                             if (numVal !== null) {
                               if (numVal >= 10) cellClass = 'bg-primary/25 border-primary text-primary font-bold'
@@ -1164,8 +606,8 @@ export default function JudgePage() {
                               <button
                                 key={globalIdx}
                                 type="button"
-                                onClick={() => setActiveShotIdx(activeShotIdx === globalIdx ? null : globalIdx)}
-                                className={`w-full text-center text-sm py-1.5 rounded border transition-all ${cellClass} ${activeShotIdx === globalIdx ? 'ring-2 ring-primary scale-105' : ''}`}
+                                onClick={() => scoreForm.setActiveShotIdx(scoreForm.activeShotIdx === globalIdx ? null : globalIdx)}
+                                className={`w-full text-center text-sm py-1.5 rounded border transition-all ${cellClass} ${scoreForm.activeShotIdx === globalIdx ? 'ring-2 ring-primary scale-105' : ''}`}
                               >
                                 <div className="text-[9px] text-muted/50 leading-none mb-0.5">{globalIdx + 1}</div>
                                 <div className="leading-none">{numVal !== null ? numVal : '-'}</div>
@@ -1173,13 +615,12 @@ export default function JudgePage() {
                             )
                           })}
                         </div>
-                        {/* Score picker for active shot in this series */}
-                        {activeShotIdx !== null && activeShotIdx >= seriesIdx * 10 && activeShotIdx < (seriesIdx + 1) * 10 && (
+                        {scoreForm.activeShotIdx !== null && scoreForm.activeShotIdx >= seriesIdx * 10 && scoreForm.activeShotIdx < (seriesIdx + 1) * 10 && (
                           <div className="mt-1.5 p-2 rounded-lg bg-card border border-primary/30">
-                            <div className="text-xs text-muted mb-1.5 text-center">Strzał {activeShotIdx + 1} — wybierz punkty:</div>
+                            <div className="text-xs text-muted mb-1.5 text-center">Strzał {scoreForm.activeShotIdx + 1} — wybierz punkty:</div>
                             <div className="flex gap-1 justify-center flex-wrap">
                               {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(score => {
-                                const isActive = shots[activeShotIdx] === String(score)
+                                const isActive = scoreForm.shots[scoreForm.activeShotIdx!] === String(score)
                                 let btnColor = 'bg-background border-border text-muted hover:border-primary/50'
                                 if (isActive) {
                                   if (score >= 10) btnColor = 'bg-primary/30 border-primary text-primary font-bold'
@@ -1194,11 +635,10 @@ export default function JudgePage() {
                                     key={score}
                                     type="button"
                                     onClick={() => {
-                                      updateShot(activeShotIdx, String(score))
-                                      // Auto-advance to next empty shot
-                                      const nextEmpty = shots.findIndex((s, i) => i > activeShotIdx && s === '')
-                                      setActiveShotIdx(nextEmpty >= 0 ? nextEmpty : null)
-                                      applyShotsCalc()
+                                      scoreForm.updateShot(scoreForm.activeShotIdx!, String(score))
+                                      const nextEmpty = scoreForm.shots.findIndex((s, i) => i > scoreForm.activeShotIdx! && s === '')
+                                      scoreForm.setActiveShotIdx(nextEmpty >= 0 ? nextEmpty : null)
+                                      scoreForm.applyShotsCalc()
                                     }}
                                     className={`w-9 h-9 rounded-lg border text-sm transition-all ${btnColor}`}
                                   >
@@ -1214,7 +654,6 @@ export default function JudgePage() {
                   })}
                 </div>
 
-                {/* Auto-calculated summary from shots */}
                 {shotsCalc && shotsCalc.filledCount > 0 && (
                   <div className="mt-3 p-3 rounded-lg bg-background border border-border">
                     <div className="grid grid-cols-3 gap-3 text-center text-sm">
@@ -1233,7 +672,7 @@ export default function JudgePage() {
                     </div>
                     <div className="mt-2 pt-2 border-t border-border flex items-center justify-between">
                       <label className="text-xs text-muted">X-ki (środek):</label>
-                      <input type="text" inputMode="numeric" value={xsCount} onChange={e => setXsCount(e.target.value.replace(/[^0-9]/g, ''))} placeholder="0" className="w-20 bg-background border border-border rounded px-2 py-1 text-sm text-center focus:outline-none focus:border-primary" />
+                      <input type="text" inputMode="numeric" value={scoreForm.xsCount} onChange={e => scoreForm.setXsCount(e.target.value.replace(/[^0-9]/g, ''))} placeholder="0" className="w-20 bg-background border border-border rounded px-2 py-1 text-sm text-center focus:outline-none focus:border-primary" />
                     </div>
                   </div>
                 )}
@@ -1241,12 +680,12 @@ export default function JudgePage() {
             )}
 
             {/* ---- QUICK MODE ---- */}
-            {entryMode === 'quick' && (
+            {scoreForm.entryMode === 'quick' && (
               <>
                 <div className="flex items-center gap-3">
                   <div className="flex-1">
                     <label className="text-sm text-muted block mb-1">Wynik *</label>
-                    <input type="text" inputMode="decimal" value={totalScore} onChange={e => setTotalScore(e.target.value.replace(',', '.'))} placeholder="np. 95" required className={inputClass} />
+                    <input type="text" inputMode="decimal" value={scoreForm.totalScore} onChange={e => scoreForm.setTotalScore(e.target.value.replace(',', '.'))} placeholder="np. 95" required className={inputClass} />
                   </div>
                   <div className="text-2xl text-muted pt-5">/</div>
                   <div className="w-20">
@@ -1254,8 +693,8 @@ export default function JudgePage() {
                     <input
                       type="text"
                       inputMode="decimal"
-                      value={maxScore}
-                      onChange={e => setMaxScore(e.target.value.replace(',', '.'))}
+                      value={scoreForm.maxScore}
+                      onChange={e => scoreForm.setMaxScore(e.target.value.replace(',', '.'))}
                       placeholder="100"
                       className={inputClass}
                     />
@@ -1265,17 +704,16 @@ export default function JudgePage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-sm text-muted block mb-1">Dziesiątki (10)</label>
-                    <input type="text" inputMode="numeric" value={tensCount} onChange={e => setTensCount(e.target.value.replace(/[^0-9]/g, ''))} placeholder="0" className={inputSmClass} />
+                    <input type="text" inputMode="numeric" value={scoreForm.tensCount} onChange={e => scoreForm.setTensCount(e.target.value.replace(/[^0-9]/g, ''))} placeholder="0" className={inputSmClass} />
                   </div>
                   <div>
                     <label className="text-sm text-muted block mb-1">X-ki (środek)</label>
-                    <input type="text" inputMode="numeric" value={xsCount} onChange={e => setXsCount(e.target.value.replace(/[^0-9]/g, ''))} placeholder="0" className={inputSmClass} />
+                    <input type="text" inputMode="numeric" value={scoreForm.xsCount} onChange={e => scoreForm.setXsCount(e.target.value.replace(/[^0-9]/g, ''))} placeholder="0" className={inputSmClass} />
                   </div>
                 </div>
               </>
             )}
 
-            {/* Validation warnings */}
             {validationErrors.length > 0 && (
               <div className="bg-warning/10 border border-warning/30 rounded-lg p-3">
                 <div className="flex items-start gap-2">
@@ -1291,19 +729,19 @@ export default function JudgePage() {
 
             <div>
               <label className="text-sm text-muted block mb-1">Komentarz sędziego</label>
-              <textarea value={comment} onChange={e => setComment(e.target.value)} rows={2} placeholder="Uwagi..." className={inputClass + ' resize-none'} />
+              <textarea value={scoreForm.comment} onChange={e => scoreForm.setComment(e.target.value)} rows={2} placeholder="Uwagi..." className={inputClass + ' resize-none'} />
             </div>
 
             <button
               type="submit"
-              disabled={submitting || !totalScore}
+              disabled={scoreForm.submitting || !scoreForm.totalScore}
               className="w-full bg-primary text-background font-semibold py-3 rounded-lg hover:bg-primary-dark transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              {submitting ? 'Zapisywanie...' : (
+              {scoreForm.submitting ? 'Zapisywanie...' : (
                 <>
                   <Upload className="w-4 h-4" />
                   Zapisz wynik
-                  {totalScore && <span className="opacity-70">({totalScore} pkt)</span>}
+                  {scoreForm.totalScore && <span className="opacity-70">({scoreForm.totalScore} pkt)</span>}
                 </>
               )}
             </button>
@@ -1317,7 +755,7 @@ export default function JudgePage() {
 
   // DONE
   const doneDiscName = selectedDiscipline?.discipline?.name
-  const formattedScore = totalScore + (xsCount && parseInt(xsCount) > 0 ? `-${xsCount}x` : '')
+  const formattedScore = scoreForm.totalScore + (scoreForm.xsCount && parseInt(scoreForm.xsCount) > 0 ? `-${scoreForm.xsCount}x` : '')
 
   return (
     <div className="max-w-md mx-auto px-4 py-16 text-center">
@@ -1330,23 +768,23 @@ export default function JudgePage() {
           {selectedMember?.full_name} — <span className="font-mono font-bold text-foreground">{formattedScore}</span> pkt
         </p>
         <p className="text-sm text-primary mb-1">{doneDiscName}</p>
-        {parseInt(tensCount) > 0 && (
+        {parseInt(scoreForm.tensCount) > 0 && (
           <p className="text-xs text-muted">
-            Dziesiątki: {tensCount}{xsCount && parseInt(xsCount) > 0 ? ` (w tym ${xsCount} X)` : ''}
+            Dziesiątki: {scoreForm.tensCount}{scoreForm.xsCount && parseInt(scoreForm.xsCount) > 0 ? ` (w tym ${scoreForm.xsCount} X)` : ''}
           </p>
         )}
         <p className="text-sm text-muted mt-4 mb-6">Wynik jest widoczny w profilu zawodnika i w rankingach.</p>
         <div className="space-y-3">
-          {selectedMember && getAvailableDisciplines(selectedMember.id).length > 0 && (
+          {selectedMember && auth.getAvailableDisciplines(selectedMember.id).length > 0 && (
             <button
               onClick={() => {
                 resetForm()
-                const available = getAvailableDisciplines(selectedMember.id)
+                const available = auth.getAvailableDisciplines(selectedMember.id)
                 if (available.length === 1) {
                   setSelectedDiscipline(available[0])
-                  setStep('photo')
+                  auth.setStep('photo')
                 } else {
-                  setStep('select-discipline')
+                  auth.setStep('select-discipline')
                 }
               }}
               className="w-full bg-primary/10 text-primary font-semibold py-3 rounded-lg hover:bg-primary/20 transition-colors flex items-center justify-center gap-2"

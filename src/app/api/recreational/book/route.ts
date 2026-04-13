@@ -3,15 +3,11 @@ import { createClient } from '@supabase/supabase-js'
 import { p24RegisterTransaction } from '@/lib/przelewy24'
 import { sendRangeRulesEmail } from '@/lib/email'
 import { randomUUID } from 'crypto'
+import { timeToMin } from '@/lib/date'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://klub-strzelecki.vercel.app'
-
-function timeToMin(t: string) {
-  const [h, m] = t.split(':').map(Number)
-  return h * 60 + (m || 0)
-}
 
 interface BookingItem {
   package_id: string

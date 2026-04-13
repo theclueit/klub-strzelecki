@@ -5,6 +5,7 @@ import { createSupabaseBrowser } from '@/lib/supabase'
 import { useAuth } from '@/components/AuthProvider'
 import { Target, Clock, CheckCircle, XCircle, Package, User, ArrowRight, Shield, Loader2, ChevronLeft, ChevronRight, Plus, QrCode, X } from 'lucide-react'
 import Link from 'next/link'
+import { formatDate, addDays } from '@/lib/date'
 
 interface Booking {
   id: string
@@ -30,15 +31,6 @@ interface Booking {
   customer?: { full_name: string; phone: string | null }
 }
 
-function formatDate(date: Date) {
-  return date.toISOString().split('T')[0]
-}
-
-function addDays(date: Date, days: number) {
-  const d = new Date(date)
-  d.setDate(d.getDate() + days)
-  return d
-}
 
 export default function InstructorPage() {
   const { member, loading } = useAuth()
