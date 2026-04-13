@@ -2,7 +2,7 @@
 
 import { Plus, Trash2, Pencil, Save, X, ChevronDown, ChevronUp, ClipboardList, Bell, Clock, Printer, MapPin, Zap, Package, Target, Trophy, Hash, Camera } from 'lucide-react'
 import type { Discipline, EventDiscipline, EventDisciplineSlot } from '@/types/database'
-import type { EventRow, ShootingLane } from '@/types/admin'
+import type { EventRow, EventJudge, ShootingLane } from '@/types/admin'
 
 const TIME_OPTIONS: string[] = []
 for (let h = 6; h <= 22; h++) {
@@ -20,6 +20,7 @@ function TimeSelect({ value, onChange, className, required }: { value: string; o
 
 export interface EventsTabProps {
   events: EventRow[]
+  eventJudges: EventJudge[]
   disciplines: Discipline[]
   shootingLanes: ShootingLane[]
   expandedEvent: string | null
@@ -113,6 +114,8 @@ export interface EventsTabProps {
   // Judge actions
   assignJudge: (eventId: string, judgeId: string) => void
   removeJudge: (eventId: string, judgeId: string) => void
+  toggleJudgeDiscipline: (eventJudgeId: string, eventDisciplineId: string, assigned: boolean) => void
+  getJudgeDisciplineIds: (eventJudgeId: string) => string[]
 
   // Slot actions
   autoGenerateSlots: (eventId: string) => void
@@ -142,7 +145,7 @@ export default function EventsTab(props: EventsTabProps) {
     getEventDiscRegCounts, getStaffingByDisciplines, getStaffingByRegistrations,
     getSlotsForEventDiscipline, getSlotRegistrationCount, getFilteredDisciplines,
     getEventRevenue, getEventMaterials,
-    assignJudge, removeJudge,
+    assignJudge, removeJudge, toggleJudgeDiscipline, getJudgeDisciplineIds,
     autoGenerateSlots, addSlotManual, deleteSlot,
     viewEventResults, openAttendancePreview, printStartNumbers, printMetryczki,
     settleEventMaterials,
@@ -468,15 +471,43 @@ export default function EventsTab(props: EventsTabProps) {
                       {assigned.length === 0 ? (
                         <p className="text-xs text-muted mb-2">Brak przypisanych sedziow.</p>
                       ) : (
-                        <div className="flex flex-wrap gap-2 mb-3">
-                          {assigned.map(j => (
-                            <span key={j.id} className="inline-flex items-center gap-1 px-3 py-1 bg-primary/10 text-primary text-xs rounded-full font-medium">
-                              {j.full_name} {j.judge_license_number ? `(${j.judge_license_number})` : ''}
-                              <button onClick={() => removeJudge(ev.id, j.id)} className="hover:text-danger">
-                                <X className="w-3 h-3" />
-                              </button>
-                            </span>
-                          ))}
+                        <div className="space-y-2 mb-3">
+                          {assigned.map(j => {
+                            const ej = props.eventJudges.find(e => e.event_id === ev.id && e.judge_id === j.id)
+                            const judgeDisciplineIds = ej ? getJudgeDisciplineIds(ej.id) : []
+                            return (
+                              <div key={j.id} className="bg-card-hover/50 rounded-lg p-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-medium text-primary">
+                                    {j.full_name} {j.judge_license_number ? `(${j.judge_license_number})` : ''}
+                                  </span>
+                                  <button onClick={() => removeJudge(ev.id, j.id)} className="text-muted hover:text-danger">
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                                {evDiscs.length > 0 && ej && (
+                                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                    {evDiscs.map(ed => {
+                                      const isAssigned = judgeDisciplineIds.includes(ed.id)
+                                      return (
+                                        <button
+                                          key={ed.id}
+                                          onClick={() => toggleJudgeDiscipline(ej.id, ed.id, isAssigned)}
+                                          className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                                            isAssigned
+                                              ? 'bg-primary/15 border-primary/40 text-primary font-medium'
+                                              : 'border-border text-muted hover:border-primary/40 hover:text-primary'
+                                          }`}
+                                        >
+                                          {ed.discipline?.name || '?'}
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
                         </div>
                       )}
                       {available.length > 0 && (

@@ -23,6 +23,7 @@ export interface EventJudge {
   status: string | null
   notified_at: string | null
   confirmed_at: string | null
+  discipline_ids?: string[]
 }
 
 export interface GuestReg {

@@ -17,6 +17,7 @@ export function useJudgeAuth() {
 
   const [members, setMembers] = useState<Member[]>([])
   const [eventDisciplines, setEventDisciplines] = useState<EventDisciplineRow[]>([])
+  const [assignedDisciplineIds, setAssignedDisciplineIds] = useState<Set<string>>(new Set())
   const [scoredDisciplines, setScoredDisciplines] = useState<Map<string, Set<string>>>(new Map())
   const [startNumbers, setStartNumbers] = useState<Map<string, number>>(new Map())
 
@@ -108,6 +109,19 @@ export function useJudgeAuth() {
     const eds = (edRes.data ?? []) as unknown as EventDisciplineRow[]
     setEventDisciplines(eds)
 
+    // Load judge's assigned disciplines for this event
+    const selectedEj = assignedEvents.find(e => (e.event as any).id === eventId)
+    if (selectedEj && judge) {
+      const { data: ejdData } = await supabase
+        .from('event_judge_disciplines')
+        .select('event_discipline_id')
+        .eq('event_judge_id', selectedEj.id)
+      const assignedEdIds = new Set((ejdData ?? []).map((d: any) => d.event_discipline_id as string))
+      setAssignedDisciplineIds(assignedEdIds)
+    } else {
+      setAssignedDisciplineIds(new Set())
+    }
+
     const scored = new Map<string, Set<string>>()
     for (const r of (resultsRes.data ?? []) as { member_id: string; discipline_id: string | null }[]) {
       if (!r.discipline_id) continue
@@ -119,9 +133,17 @@ export function useJudgeAuth() {
   }
 
   function getAvailableDisciplines(memberId: string): EventDisciplineRow[] {
+    // If judge has assigned disciplines, filter to only those
+    let available = eventDisciplines
+    if (assignedDisciplineIds.size > 0) {
+      available = available.filter(ed => assignedDisciplineIds.has(ed.id))
+    }
+    // Then filter out already scored
     const scored = scoredDisciplines.get(memberId)
-    if (!scored) return eventDisciplines
-    return eventDisciplines.filter(ed => !scored.has(ed.discipline_id))
+    if (scored) {
+      available = available.filter(ed => !scored.has(ed.discipline_id))
+    }
+    return available
   }
 
   function canShowPhoto(ed: EventDisciplineRow | null): boolean {

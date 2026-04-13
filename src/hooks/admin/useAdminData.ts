@@ -62,7 +62,7 @@ export function useAdminData() {
       supabase.from('events').select('*').order('start_date', { ascending: false }),
       supabase.from('disciplines').select('*').order('name'),
       supabase.from('members').select('*').in('role', ['judge', 'admin', 'superadmin']).not('judge_license_number', 'is', null).order('full_name'),
-      supabase.from('event_judges').select('*'),
+      supabase.from('event_judges').select('*, event_judge_disciplines(event_discipline_id)'),
       supabase.from('members').select('*').eq('is_active', true).order('full_name'),
       supabase.from('guest_registrations').select('*').order('registered_at', { ascending: false }),
       supabase.from('event_registrations').select('*, member:members(id, full_name, email, license_number, pesel, address, id_document_number, has_weapons_permit, weapon_permit_number, club_name, phone)').order('registered_at', { ascending: false }),
@@ -75,7 +75,10 @@ export function useAdminData() {
     setEvents((evRes.data ?? []) as EventRow[])
     setDisciplines((discRes.data ?? []) as Discipline[])
     setJudges((judgesRes.data ?? []) as Member[])
-    setEventJudges((ejRes.data ?? []) as EventJudge[])
+    setEventJudges((ejRes.data ?? []).map((ej: any) => ({
+      ...ej,
+      discipline_ids: (ej.event_judge_disciplines ?? []).map((d: any) => d.event_discipline_id),
+    })) as EventJudge[])
     setAllMembers((membersRes.data ?? []) as Member[])
     setGuestRegs((guestRes.data ?? []) as GuestReg[])
     setMemberRegs((memberRegsRes.data ?? []) as any[])

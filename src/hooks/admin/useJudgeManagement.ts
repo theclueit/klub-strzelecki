@@ -37,7 +37,6 @@ export function useJudgeManagement({ judges, eventJudges, events, allMembers, ev
 
   async function assignJudge(eventId: string, judgeId: string) {
     const { data } = await supabase.from('event_judges').insert({ event_id: eventId, judge_id: judgeId }).select('id').single()
-    // If event is published, send email notification immediately
     const ev = events.find(e => e.id === eventId)
     if (data && ev?.is_published) {
       notifyJudge(data.id)
@@ -48,6 +47,25 @@ export function useJudgeManagement({ judges, eventJudges, events, allMembers, ev
   async function removeJudge(eventId: string, judgeId: string) {
     await supabase.from('event_judges').delete().eq('event_id', eventId).eq('judge_id', judgeId)
     loadAll()
+  }
+
+  async function toggleJudgeDiscipline(eventJudgeId: string, eventDisciplineId: string, assigned: boolean) {
+    if (assigned) {
+      await supabase.from('event_judge_disciplines').delete()
+        .eq('event_judge_id', eventJudgeId)
+        .eq('event_discipline_id', eventDisciplineId)
+    } else {
+      await supabase.from('event_judge_disciplines').insert({
+        event_judge_id: eventJudgeId,
+        event_discipline_id: eventDisciplineId,
+      })
+    }
+    loadAll()
+  }
+
+  function getJudgeDisciplineIds(eventJudgeId: string): string[] {
+    const ej = eventJudges.find(e => e.id === eventJudgeId)
+    return ej?.discipline_ids ?? []
   }
 
   async function promoteToJudge(memberId: string) {
@@ -140,6 +158,8 @@ export function useJudgeManagement({ judges, eventJudges, events, allMembers, ev
     notifyJudge,
     assignJudge,
     removeJudge,
+    toggleJudgeDiscipline,
+    getJudgeDisciplineIds,
     promoteToJudge,
     changeRole,
     filterByPermSearch,

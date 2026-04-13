@@ -115,6 +115,7 @@ export default function AdminPage() {
 
   const {
     permSearchQuery, setPermSearchQuery, notifyJudge, assignJudge, removeJudge,
+    toggleJudgeDiscipline, getJudgeDisciplineIds,
     promoteToJudge, changeRole, filterByPermSearch,
     getStaffingByDisciplines, getStaffingByRegistrations,
   } = useJudgeManagement({
@@ -332,6 +333,7 @@ export default function AdminPage() {
       {tab === 'events' && (
         <EventsTab
           events={events}
+          eventJudges={eventJudges}
           disciplines={disciplines}
           shootingLanes={shootingLanes}
           expandedEvent={expandedEvent}
@@ -374,6 +376,8 @@ export default function AdminPage() {
           getEventMaterials={getEventMaterials}
           assignJudge={assignJudge}
           removeJudge={removeJudge}
+          toggleJudgeDiscipline={toggleJudgeDiscipline}
+          getJudgeDisciplineIds={getJudgeDisciplineIds}
           autoGenerateSlots={autoGenerateSlots}
           addSlotManual={addSlotManual}
           deleteSlot={deleteSlot}
