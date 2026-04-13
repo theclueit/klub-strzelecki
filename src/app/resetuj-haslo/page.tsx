@@ -17,13 +17,32 @@ export default function ResetPasswordPage() {
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [sessionReady, setSessionReady] = useState(false)
+  const [expired, setExpired] = useState(false)
 
   useEffect(() => {
-    supabase.auth.onAuthStateChange((event) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'PASSWORD_RECOVERY') {
         setSessionReady(true)
       }
     })
+
+    // Fallback: sprawdź czy sesja już istnieje (hash mógł być przetworzony przed mount)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) setSessionReady(true)
+    })
+
+    // Timeout: jeśli po 10s brak sesji — link wygasł lub jest nieprawidłowy
+    const timeout = setTimeout(() => {
+      setExpired(prev => {
+        // Ustaw expired tylko jeśli sessionReady nadal false
+        return !sessionReady ? true : prev
+      })
+    }, 10000)
+
+    return () => {
+      subscription.unsubscribe()
+      clearTimeout(timeout)
+    }
   }, [supabase.auth])
 
   async function handlePasswordReset(e: React.FormEvent) {
@@ -55,7 +74,7 @@ export default function ResetPasswordPage() {
 
     setSuccess(true)
     setTimeout(() => {
-      router.push('/kalendarz')
+      router.push('/')
     }, 3000)
   }
 
@@ -67,10 +86,10 @@ export default function ResetPasswordPage() {
           <h1 className="text-2xl font-bold mb-2">Hasło zmienione</h1>
           <p className="text-sm text-muted mb-6">Twoje hasło zostało pomyślnie zaktualizowane. Za chwilę zostaniesz przekierowany.</p>
           <Link
-            href="/kalendarz"
+            href="/"
             className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-background font-semibold rounded-lg hover:bg-primary-dark transition-colors"
           >
-            Przejdź do kalendarza
+            Przejdź do strony głównej
           </Link>
         </div>
       </div>
@@ -86,7 +105,14 @@ export default function ResetPasswordPage() {
           <p className="text-sm text-muted mt-1">Ustaw nowe hasło do swojego konta</p>
         </div>
 
-        {!sessionReady ? (
+        {expired && !sessionReady ? (
+          <div className="text-center space-y-3">
+            <p className="text-sm text-danger">Link resetujący wygasł lub jest nieprawidłowy.</p>
+            <Link href="/logowanie" className="text-sm text-primary hover:underline">
+              Wyślij nowy link
+            </Link>
+          </div>
+        ) : !sessionReady ? (
           <div className="text-center">
             <p className="text-sm text-muted">Weryfikacja linku resetującego...</p>
           </div>
