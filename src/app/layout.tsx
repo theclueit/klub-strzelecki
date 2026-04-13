@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Navigation from "@/components/Navigation";
 import AuthProvider from "@/components/AuthProvider";
+import { ModulesProvider } from "@/components/ModulesProvider";
+import { getEnabledModules } from "@/lib/modules";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -19,11 +21,13 @@ export const metadata: Metadata = {
   description: "Portal klubu strzeleckiego — kalendarz, rankingi, wyniki, zapisy na zawody",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const enabledModules = await getEnabledModules()
+
   return (
     <html
       lang="pl"
@@ -31,6 +35,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         <AuthProvider>
+          <ModulesProvider enabled={enabledModules}>
           <Navigation />
           <main className="flex-1">{children}</main>
           <footer className="bg-card border-t border-border py-6">
@@ -42,6 +47,7 @@ export default function RootLayout({
               </p>
             </div>
           </footer>
+        </ModulesProvider>
         </AuthProvider>
       </body>
     </html>

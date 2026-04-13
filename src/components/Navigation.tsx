@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { Target, Calendar, Trophy, Users, Crosshair, UserPlus, LogIn, LogOut, Shield, Menu, X, Award, Clock, ChevronDown } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '@/components/AuthProvider'
+import { useModules } from '@/components/ModulesProvider'
 
 interface NavItem {
   href: string
@@ -85,37 +86,40 @@ export default function Navigation() {
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
   const { member, loading, signOut } = useAuth()
+  const enabledModules = useModules()
 
-  // Grupy menu
+  // Grupy menu — warunkowe na podstawie włączonych modułów
+  const klubItems: NavItem[] = [
+    { href: '/', label: 'O klubie', icon: Target },
+    ...(enabledModules.has('events') ? [
+      { href: '/kalendarz', label: 'Kalendarz', icon: Calendar },
+      { href: '/wyniki', label: 'Wyniki zawodów', icon: Award },
+      { href: '/rankingi', label: 'Rankingi', icon: Trophy },
+    ] : []),
+    ...(enabledModules.has('members') ? [
+      { href: '/zawodnicy', label: 'Zawodnicy', icon: Users },
+      ...(!member ? [{ href: '/dolacz', label: 'Zapisz się', icon: UserPlus }] : []),
+    ] : []),
+  ]
+
   const navGroups: NavGroup[] = [
-    {
-      label: 'Klub',
-      icon: Target,
-      items: [
-        { href: '/', label: 'O klubie', icon: Target },
-        { href: '/kalendarz', label: 'Kalendarz', icon: Calendar },
-        { href: '/zawodnicy', label: 'Zawodnicy', icon: Users },
-        { href: '/wyniki', label: 'Wyniki zawodów', icon: Award },
-        { href: '/rankingi', label: 'Rankingi', icon: Trophy },
-        ...(!member ? [{ href: '/dolacz', label: 'Zapisz się', icon: UserPlus }] : []),
-      ],
-    },
-    {
+    { label: 'Klub', icon: Target, items: klubItems },
+    ...(enabledModules.has('range') ? [{
       label: 'Strzelnica',
       icon: Crosshair,
       items: [
         { href: '/rezerwacje', label: 'Rezerwacje torów', icon: Clock },
         { href: '/strzelanie-rekreacyjne', label: 'Strzelanie rekreacyjne', icon: Crosshair },
       ],
-    },
+    }] : []),
   ]
 
-  // Role-based links — flat, na tym samym poziomie co grupy (widoczne tylko dla uprawnionych)
+  // Role-based links — warunkowe na podstawie roli + włączonych modułów
   const roleLinks: NavItem[] = [
-    ...(member?.role === 'judge' || member?.role === 'admin' || member?.role === 'superadmin'
+    ...(enabledModules.has('events') && (member?.role === 'judge' || member?.role === 'admin' || member?.role === 'superadmin')
       ? [{ href: '/sedzia', label: 'Sędzia', icon: Crosshair }]
       : []),
-    ...(member?.role === 'instructor' || member?.role === 'admin' || member?.role === 'superadmin'
+    ...(enabledModules.has('range') && (member?.role === 'instructor' || member?.role === 'admin' || member?.role === 'superadmin')
       ? [{ href: '/instruktor', label: 'Instruktor', icon: Target }]
       : []),
     ...(['registrar', 'range_registrar', 'admin', 'superadmin'].includes(member?.role || '')
