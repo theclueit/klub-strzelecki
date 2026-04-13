@@ -164,6 +164,12 @@ export default function ProfilePage() {
     setError('')
     setSaved(false)
 
+    if (!form.address.trim()) {
+      setError('Adres zamieszkania jest wymagany')
+      setSaving(false)
+      return
+    }
+
     const { error: dbError } = await supabase
       .from('members')
       .update({
@@ -505,8 +511,8 @@ export default function ProfilePage() {
                   </div>
                 </div>
                 <div className="mt-3">
-                  <label className="text-xs text-muted block mb-1">Adres zamieszkania</label>
-                  <input type="text" value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} placeholder="ul. Strzelecka 1, 00-001 Warszawa" className={inputClass} />
+                  <label className="text-xs text-muted block mb-1">Adres zamieszkania *</label>
+                  <input type="text" required value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} placeholder="ul. Strzelecka 1, 00-001 Warszawa" className={inputClass} />
                 </div>
                 <div className="mt-3">
                   <label className="text-xs text-muted block mb-1">Klub strzelecki</label>

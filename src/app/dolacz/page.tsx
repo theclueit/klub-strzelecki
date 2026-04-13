@@ -49,6 +49,11 @@ export default function JoinPage() {
       return
     }
 
+    if (!form.address?.trim()) {
+      setError('Adres zamieszkania jest wymagany (wymóg prawny — książka wejścia na strzelnicę).')
+      return
+    }
+
     setSubmitting(true)
 
     // 1. Create auth account
