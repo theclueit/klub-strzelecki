@@ -1,24 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { requireRole, isAuthError } from '@/lib/api-auth'
 import { Resend } from 'resend'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 const resendKey = process.env.RESEND_API_KEY!
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://klub-strzelecki.vercel.app'
 
+function escapeHtml(str: string): string {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
 export async function POST(req: NextRequest) {
   try {
-    if (!supabaseServiceKey || !resendKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
+    const auth = await requireRole('admin', 'superadmin')
+    if (isAuthError(auth)) return auth
+
+    if (!resendKey) {
+      return NextResponse.json({ error: 'Missing email config' }, { status: 500 })
     }
 
+    const { supabase } = auth
     const { event_judge_id } = await req.json()
     if (!event_judge_id) {
       return NextResponse.json({ error: 'Missing event_judge_id' }, { status: 400 })
     }
-
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
     // Get the event_judge record with judge and event details
     const { data: ej, error: ejErr } = await supabase
@@ -44,25 +48,30 @@ export async function POST(req: NextRequest) {
       day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
     })
 
+    // Sanitize user-provided data for HTML email
+    const safeName = escapeHtml(judge.full_name)
+    const safeTitle = escapeHtml(event.title)
+    const safeLocation = event.location ? escapeHtml(event.location) : ''
+
     const resend = new Resend(resendKey)
     const { error: emailErr } = await resend.emails.send({
       from: 'Klub Strzelecki <noreply@klub-strzelecki.vercel.app>',
       to: judge.email,
-      subject: `Wyznaczenie na sędziego: ${event.title}`,
+      subject: `Wyznaczenie na sędziego: ${safeTitle}`,
       html: `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
           <div style="background: #1a1a2e; border-radius: 12px; padding: 32px; color: #e0e0e0;">
             <h1 style="color: #ff6b35; margin: 0 0 8px;">Klub Strzelecki</h1>
             <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Powiadomienie o wyznaczeniu na sędziego</p>
 
-            <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${judge.full_name}</strong>,</p>
+            <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${safeName}</strong>,</p>
 
             <p style="margin: 0 0 24px;">Zostałeś(aś) wyznaczony(a) na <strong style="color: #fff;">sędziego</strong> podczas wydarzenia:</p>
 
             <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
-              <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${event.title}</h2>
+              <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${safeTitle}</h2>
               <p style="margin: 0 0 6px; font-size: 14px;">📅 ${eventDate}</p>
-              ${event.location ? `<p style="margin: 0; font-size: 14px;">📍 ${event.location}</p>` : ''}
+              ${safeLocation ? `<p style="margin: 0; font-size: 14px;">📍 ${safeLocation}</p>` : ''}
             </div>
 
             <p style="margin: 0 0 24px;">Proszę potwierdź swoją dostępność klikając poniższy przycisk:</p>
@@ -83,7 +92,8 @@ export async function POST(req: NextRequest) {
     })
 
     if (emailErr) {
-      return NextResponse.json({ error: 'Email send failed: ' + emailErr.message }, { status: 500 })
+      console.error('Judge notify email error:', emailErr)
+      return NextResponse.json({ error: 'Błąd wysyłki emaila' }, { status: 500 })
     }
 
     // Mark as notified
@@ -94,6 +104,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true })
   } catch (err: any) {
-    return NextResponse.json({ error: err.message ?? 'Unknown error' }, { status: 500 })
+    console.error('Judge notify error:', err)
+    return NextResponse.json({ error: 'Nieznany błąd' }, { status: 500 })
   }
 }

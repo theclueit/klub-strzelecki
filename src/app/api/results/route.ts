@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/lib/supabase'
+import { requireRole, isAuthError } from '@/lib/api-auth'
 
 export async function POST(req: NextRequest) {
   try {
+    // Only judges, admins, and superadmins can submit results
+    const auth = await requireRole('judge', 'admin', 'superadmin')
+    if (isAuthError(auth)) return auth
+
+    const { supabase, member } = auth
     const body = await req.json()
 
     const {
       member_id,
-      judge_id,
       event_id,
       discipline_id,
       total_score,
@@ -29,7 +33,7 @@ export async function POST(req: NextRequest) {
 
     const { data, error } = await supabase.from('results').insert({
       member_id,
-      judge_id: judge_id || null,
+      judge_id: member.id, // Always use authenticated judge's ID
       event_id: event_id || null,
       discipline_id: discipline_id || null,
       total_score: parseFloat(norm(total_score)),
@@ -44,7 +48,8 @@ export async function POST(req: NextRequest) {
     }).select('id').single()
 
     if (error) {
-      return NextResponse.json({ error: error.message, code: error.code }, { status: 422 })
+      console.error('Result insert error:', error)
+      return NextResponse.json({ error: 'Błąd zapisu wyniku' }, { status: 422 })
     }
 
     // Trigger rankings recalculation in background
@@ -53,6 +58,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, id: data?.id })
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Nieznany błąd' }, { status: 500 })
+    console.error('Results API error:', err)
+    return NextResponse.json({ error: 'Nieznany błąd' }, { status: 500 })
   }
 }

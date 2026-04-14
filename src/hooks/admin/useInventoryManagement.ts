@@ -44,7 +44,7 @@ export function useInventoryManagement({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   const [inventoryForm, setInventoryForm] = useState({
     name: '', category: 'ammunition', description: '', caliber: '', quantity: '0', unit: 'szt.',
-    purchase_price_pln: '0', purchase_date: '', supplier: '', min_stock_level: '0', location: '',
+    purchase_price_pln: '0', sell_price_pln: '', purchase_date: '', supplier: '', min_stock_level: '0', location: '',
   })
 
   // Inventory transactions
@@ -106,7 +106,7 @@ export function useInventoryManagement({
 
   function openAddInventory() {
     setEditingInventory(null)
-    setInventoryForm({ name: '', category: 'ammunition', description: '', caliber: '', quantity: '0', unit: 'szt.', purchase_price_pln: '0', purchase_date: '', supplier: '', min_stock_level: '0', location: '' })
+    setInventoryForm({ name: '', category: 'ammunition', description: '', caliber: '', quantity: '0', unit: 'szt.', purchase_price_pln: '0', sell_price_pln: '', purchase_date: '', supplier: '', min_stock_level: '0', location: '' })
     setShowInventoryForm(true)
   }
 
@@ -115,6 +115,7 @@ export function useInventoryManagement({
     setInventoryForm({
       name: item.name, category: item.category, description: item.description || '', caliber: item.caliber || '',
       quantity: String(item.quantity), unit: item.unit, purchase_price_pln: String(item.purchase_price_pln),
+      sell_price_pln: item.sell_price_pln != null ? String(item.sell_price_pln) : '',
       purchase_date: item.purchase_date || '', supplier: item.supplier || '', min_stock_level: String(item.min_stock_level),
       location: item.location || '',
     })
@@ -123,6 +124,7 @@ export function useInventoryManagement({
 
   async function saveInventory(e: React.FormEvent) {
     e.preventDefault()
+    const sellPrice = inventoryForm.sell_price_pln ? parseFloat(inventoryForm.sell_price_pln) : null
     const payload = {
       name: inventoryForm.name,
       category: inventoryForm.category,
@@ -131,6 +133,7 @@ export function useInventoryManagement({
       quantity: parseInt(inventoryForm.quantity) || 0,
       unit: inventoryForm.unit,
       purchase_price_pln: parseFloat(inventoryForm.purchase_price_pln) || 0,
+      sell_price_pln: sellPrice,
       purchase_date: inventoryForm.purchase_date || null,
       supplier: inventoryForm.supplier || null,
       min_stock_level: parseInt(inventoryForm.min_stock_level) || 0,

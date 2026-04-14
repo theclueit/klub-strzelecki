@@ -1,22 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { requireRole, isAuthError } from '@/lib/api-auth'
 import { sendEventReminder } from '@/lib/email'
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
+import { checkRateLimit } from '@/lib/rate-limit'
 
 export async function POST(req: NextRequest) {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
+    const auth = await requireRole('admin', 'superadmin')
+    if (isAuthError(auth)) return auth
+
+    // Rate limit: 5 mass email sends per hour
+    const rl = checkRateLimit(`email-reminder:${auth.member.id}`, { limit: 5, windowSeconds: 3600 })
+    if (!rl.success) {
+      return NextResponse.json({ error: 'Zbyt wiele wysyłek. Spróbuj później.' }, { status: 429 })
     }
 
+    const { supabase } = auth
     const { event_id } = await req.json()
     if (!event_id) {
       return NextResponse.json({ error: 'Missing event_id' }, { status: 400 })
     }
-
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
     // Get event details
     const { data: event, error: eventErr } = await supabase
@@ -70,6 +72,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, sent, errors: errors.length > 0 ? errors : undefined })
   } catch (err: any) {
-    return NextResponse.json({ error: err.message ?? 'Unknown error' }, { status: 500 })
+    console.error('Event reminder error:', err)
+    return NextResponse.json({ error: 'Błąd wysyłki' }, { status: 500 })
   }
 }

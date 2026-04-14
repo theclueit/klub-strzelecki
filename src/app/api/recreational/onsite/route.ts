@@ -1,42 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { requireRole, isAuthError } from '@/lib/api-auth'
 import { sendRangeRulesEmail } from '@/lib/email'
 import { timeToMin } from '@/lib/date'
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 // On-site booking by range registrar — custom weapon, ammo, price, instructor
 export async function POST(req: NextRequest) {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
-    }
+    // Verify registrar has proper role from session — NOT from body
+    const auth = await requireRole('admin', 'superadmin', 'registrar', 'range_registrar')
+    if (isAuthError(auth)) return auth
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const { supabase, member: registrar } = auth
     const body = await req.json()
     const {
       weapon_id, instructor_id, date, start_time, duration_minutes,
       ammo_count, price_pln, guest_name, guest_phone, guest_address, guest_document, guest_email, notes,
-      member_id, registrar_id, package_id,
+      member_id, package_id,
     } = body
 
     if (!weapon_id || !instructor_id || !date || !start_time || !duration_minutes) {
       return NextResponse.json({ error: 'Brakuje wymaganych danych' }, { status: 400 })
-    }
-
-    // Verify registrar has range_registrar/admin role
-    if (!registrar_id) {
-      return NextResponse.json({ error: 'Brak uprawnień' }, { status: 403 })
-    }
-    const { data: registrar } = await supabase
-      .from('members')
-      .select('role')
-      .eq('id', registrar_id)
-      .single()
-
-    if (!registrar || !['admin', 'superadmin', 'registrar', 'range_registrar'].includes(registrar.role)) {
-      return NextResponse.json({ error: 'Brak uprawnień rejestratora' }, { status: 403 })
     }
 
     // Auto-create recreational_client member if guest_email provided and no member_id
@@ -217,6 +200,6 @@ export async function POST(req: NextRequest) {
     })
   } catch (err: any) {
     console.error('On-site recreational booking error:', err)
-    return NextResponse.json({ error: err.message ?? 'Błąd rezerwacji' }, { status: 500 })
+    return NextResponse.json({ error: 'Błąd rezerwacji' }, { status: 500 })
   }
 }

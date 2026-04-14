@@ -9,6 +9,16 @@ function getResend() {
   return new Resend(resendKey)
 }
 
+/** Escape user-provided strings before inserting into HTML emails */
+function esc(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString('pl-PL', {
     day: 'numeric',
@@ -69,15 +79,15 @@ async function getSafetyRules(): Promise<string> {
     if (safety) {
       html += `
         <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
-          <h3 style="color: #ff6b35; margin: 0 0 12px; font-size: 15px;">&#128680; ${safety.title}</h3>
-          <div style="margin: 0; font-size: 13px; line-height: 1.8; color: #ccc;">${safety.content}</div>
+          <h3 style="color: #ff6b35; margin: 0 0 12px; font-size: 15px;">&#128680; ${esc(safety.title)}</h3>
+          <div style="margin: 0; font-size: 13px; line-height: 1.8; color: #ccc;">${esc(safety.content)}</div>
         </div>`
     }
     if (regulations) {
       html += `
         <div style="background: #1e2a45; border-left: 3px solid #ff6b35; border-radius: 0 8px 8px 0; padding: 16px; margin: 0 0 24px;">
-          <h3 style="color: #fff; margin: 0 0 8px; font-size: 14px;">&#128220; ${regulations.title}</h3>
-          <div style="margin: 0; font-size: 12px; line-height: 1.8; color: #bbb;">${regulations.content}</div>
+          <h3 style="color: #fff; margin: 0 0 8px; font-size: 14px;">&#128220; ${esc(regulations.title)}</h3>
+          <div style="margin: 0; font-size: 12px; line-height: 1.8; color: #bbb;">${esc(regulations.content)}</div>
         </div>`
     }
 
@@ -116,25 +126,25 @@ export async function sendRegistrationConfirmation(params: {
   const date = formatDate(params.eventDate)
   const safetyRules = await getSafetyRules()
   const disciplinesList = params.disciplines.length > 0
-    ? params.disciplines.map(d => `<li style="margin: 4px 0;">${d}</li>`).join('')
+    ? params.disciplines.map(d => `<li style="margin: 4px 0;">${esc(d)}</li>`).join('')
     : '<li>Nie wybrano dyscyplin</li>'
 
   return resend.emails.send({
     from: fromEmail,
     to: params.to,
-    subject: `Potwierdzenie zapisu: ${params.eventTitle}`,
+    subject: `Potwierdzenie zapisu: ${esc(params.eventTitle)}`,
     html: emailWrapper(`
       <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Potwierdzenie rejestracji na wydarzenie</p>
 
-      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${params.memberName}</strong>,</p>
+      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${esc(params.memberName)}</strong>,</p>
 
       <p style="margin: 0 0 24px;">Twój zapis na wydarzenie został pomyślnie zarejestrowany.</p>
 
       <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
-        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${params.eventTitle}</h2>
+        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${esc(params.eventTitle)}</h2>
         ${params.startNumber ? `<p style="margin: 0 0 8px; font-size: 16px;"><strong style="color: #ff6b35;">Numer startowy: ${params.startNumber}</strong></p>` : ''}
         <p style="margin: 0 0 6px; font-size: 14px;">&#128197; ${date}</p>
-        ${params.eventLocation ? `<p style="margin: 0 0 12px; font-size: 14px;">&#128205; ${params.eventLocation}</p>` : ''}
+        ${params.eventLocation ? `<p style="margin: 0 0 12px; font-size: 14px;">&#128205; ${esc(params.eventLocation)}</p>` : ''}
         <p style="margin: 0 0 6px; font-size: 13px; color: #aaa;">Wybrane dyscypliny:</p>
         <ul style="margin: 0; padding-left: 20px; font-size: 14px;">${disciplinesList}</ul>
       </div>
@@ -165,18 +175,18 @@ export async function sendEventReminder(params: {
   return resend.emails.send({
     from: fromEmail,
     to: params.to,
-    subject: `Przypomnienie: ${params.eventTitle} — ${timeLabel}`,
+    subject: `Przypomnienie: ${esc(params.eventTitle)} — ${timeLabel}`,
     html: emailWrapper(`
       <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Przypomnienie o nadchodzącym wydarzeniu</p>
 
-      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${params.memberName}</strong>,</p>
+      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${esc(params.memberName)}</strong>,</p>
 
       <p style="margin: 0 0 24px;">Przypominamy, że <strong style="color: #fff;">${timeLabel}</strong> odbywa się wydarzenie, na które jesteś zapisany(a):</p>
 
       <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
-        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${params.eventTitle}</h2>
+        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${esc(params.eventTitle)}</h2>
         <p style="margin: 0 0 6px; font-size: 14px;">&#128197; ${date}</p>
-        ${params.eventLocation ? `<p style="margin: 0; font-size: 14px;">&#128205; ${params.eventLocation}</p>` : ''}
+        ${params.eventLocation ? `<p style="margin: 0; font-size: 14px;">&#128205; ${esc(params.eventLocation)}</p>` : ''}
       </div>
 
       <div style="background: #1e2a45; border-left: 3px solid #ff6b35; border-radius: 0 8px 8px 0; padding: 16px; margin: 0 0 24px;">
@@ -218,18 +228,18 @@ export async function sendResultNotification(params: {
   return resend.emails.send({
     from: fromEmail,
     to: params.to,
-    subject: `Wyniki: ${params.eventTitle} — ${params.disciplineName}`,
+    subject: `Wyniki: ${esc(params.eventTitle)} — ${esc(params.disciplineName)}`,
     html: emailWrapper(`
       <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Twoje wyniki z zawodów</p>
 
-      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${params.memberName}</strong>,</p>
+      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${esc(params.memberName)}</strong>,</p>
 
       <p style="margin: 0 0 24px;">Twoje wyniki z zawodów zostały opublikowane:</p>
 
       <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
-        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${params.eventTitle}</h2>
+        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${esc(params.eventTitle)}</h2>
         <p style="margin: 0 0 6px; font-size: 14px;">&#128197; ${date}</p>
-        <p style="margin: 0 0 6px; font-size: 14px;">&#127919; Dyscyplina: <strong style="color: #fff;">${params.disciplineName}</strong></p>
+        <p style="margin: 0 0 6px; font-size: 14px;">&#127919; Dyscyplina: <strong style="color: #fff;">${esc(params.disciplineName)}</strong></p>
         <hr style="border: none; border-top: 1px solid #2a3a5e; margin: 12px 0;" />
         <p style="margin: 0 0 6px; font-size: 20px; text-align: center;">
           ${medal} <strong style="color: #ff6b35;">${scoreText}</strong>
@@ -258,24 +268,24 @@ export async function sendGuestRegistrationConfirmation(params: {
   const date = formatDate(params.eventDate)
   const safetyRules = await getSafetyRules()
   const disciplinesList = params.disciplines.length > 0
-    ? params.disciplines.map(d => `<li style="margin: 4px 0;">${d}</li>`).join('')
+    ? params.disciplines.map(d => `<li style="margin: 4px 0;">${esc(d)}</li>`).join('')
     : '<li>Nie wybrano dyscyplin</li>'
 
   return resend.emails.send({
     from: fromEmail,
     to: params.to,
-    subject: `Potwierdzenie zgłoszenia: ${params.eventTitle}`,
+    subject: `Potwierdzenie zgłoszenia: ${esc(params.eventTitle)}`,
     html: emailWrapper(`
       <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Potwierdzenie zgłoszenia gościa</p>
 
-      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${params.guestName}</strong>,</p>
+      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${esc(params.guestName)}</strong>,</p>
 
       <p style="margin: 0 0 24px;">Twoje zgłoszenie na wydarzenie zostało przyjęte. Organizator skontaktuje się z Tobą w celu potwierdzenia udziału.</p>
 
       <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
-        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${params.eventTitle}</h2>
+        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${esc(params.eventTitle)}</h2>
         <p style="margin: 0 0 6px; font-size: 14px;">&#128197; ${date}</p>
-        ${params.eventLocation ? `<p style="margin: 0 0 12px; font-size: 14px;">&#128205; ${params.eventLocation}</p>` : ''}
+        ${params.eventLocation ? `<p style="margin: 0 0 12px; font-size: 14px;">&#128205; ${esc(params.eventLocation)}</p>` : ''}
         <p style="margin: 0 0 6px; font-size: 13px; color: #aaa;">Wybrane dyscypliny:</p>
         <ul style="margin: 0; padding-left: 20px; font-size: 14px;">${disciplinesList}</ul>
       </div>
@@ -302,7 +312,7 @@ export async function sendWelcomeEmail(params: {
     html: emailWrapper(`
       <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Rejestracja zakończona pomyślnie</p>
 
-      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${params.memberName}</strong>,</p>
+      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${esc(params.memberName)}</strong>,</p>
 
       <p style="margin: 0 0 24px;">Twoje konto w portalu Klubu Strzeleckiego zostało utworzone. Możesz teraz:</p>
 
@@ -338,14 +348,14 @@ export async function sendRangeRulesEmail(params: {
     html: emailWrapper(`
       <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Regulamin i zasady bezpieczeństwa</p>
 
-      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${params.guestName}</strong>,</p>
+      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${esc(params.guestName)}</strong>,</p>
 
-      <p style="margin: 0 0 8px;">Dziękujemy za rezerwację strzelania rekreacyjnego${params.packageName ? ` (${params.packageName})` : ''}.</p>
+      <p style="margin: 0 0 8px;">Dziękujemy za rezerwację strzelania rekreacyjnego${params.packageName ? ` (${esc(params.packageName)})` : ''}.</p>
       <p style="margin: 0 0 24px;">Przed wizytą na strzelnicy prosimy o zapoznanie się z poniższym regulaminem i zasadami bezpieczeństwa:</p>
 
       <div style="background: #16213e; border-radius: 8px; padding: 16px; margin: 0 0 24px;">
-        <p style="margin: 0 0 4px; font-size: 13px;">&#128197; Data: <strong style="color: #fff;">${params.bookingDate}</strong></p>
-        <p style="margin: 0; font-size: 13px;">&#128299; Broń: <strong style="color: #fff;">${params.weaponName}</strong></p>
+        <p style="margin: 0 0 4px; font-size: 13px;">&#128197; Data: <strong style="color: #fff;">${esc(params.bookingDate)}</strong></p>
+        <p style="margin: 0; font-size: 13px;">&#128299; Broń: <strong style="color: #fff;">${esc(params.weaponName)}</strong></p>
       </div>
 
       ${safetyRules}
@@ -380,19 +390,19 @@ export async function sendPaymentConfirmation(params: {
   return resend.emails.send({
     from: fromEmail,
     to: params.to,
-    subject: `Potwierdzenie płatności: ${params.eventTitle}`,
+    subject: `Potwierdzenie płatności: ${esc(params.eventTitle)}`,
     html: emailWrapper(`
       <p style="color: #888; margin: 0 0 24px; font-size: 14px;">Potwierdzenie płatności za wydarzenie</p>
 
-      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${params.memberName}</strong>,</p>
+      <p style="margin: 0 0 16px;">Witaj <strong style="color: #fff;">${esc(params.memberName)}</strong>,</p>
 
       <p style="margin: 0 0 24px;">Twoja płatność została pomyślnie zaksięgowana.</p>
 
       <div style="background: #16213e; border-radius: 8px; padding: 20px; margin: 0 0 24px;">
-        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${params.eventTitle}</h2>
+        <h2 style="color: #fff; margin: 0 0 12px; font-size: 18px;">${esc(params.eventTitle)}</h2>
         <p style="margin: 0 0 8px; font-size: 14px;">&#128197; ${date}</p>
         <p style="margin: 0 0 8px; font-size: 16px;"><strong style="color: #22c55e;">Zapłacono: ${params.amount.toFixed(2)} zł</strong></p>
-        <p style="margin: 0; font-size: 12px; color: #888;">Nr transakcji: ${params.sessionId}</p>
+        <p style="margin: 0; font-size: 12px; color: #888;">Nr transakcji: ${esc(params.sessionId)}</p>
       </div>
 
       <div style="text-align: center; margin: 0 0 24px;">

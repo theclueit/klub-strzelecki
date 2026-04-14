@@ -303,7 +303,6 @@ export function useRecreationalBooking(packages: RecPackage[], lanes: Lane[]) {
             start_time: item.slot.time,
             instructor_id: item.slot.instructorId,
           })),
-          member_id: member?.id || null,
           guests: member ? undefined : guestForms,
           guest_name: member ? null : guestForms[0]?.name,
           guest_email: member ? null : guestForms[0]?.email,

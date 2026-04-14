@@ -1,25 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAuth, isAuthError } from '@/lib/api-auth'
 import { sendWelcomeEmail } from '@/lib/email'
 
 export async function POST(req: NextRequest) {
   try {
-    const { email, name } = await req.json()
+    // Require auth — only send welcome to yourself or admin can trigger
+    const auth = await requireAuth()
+    if (isAuthError(auth)) return auth
 
-    if (!email || !name) {
-      return NextResponse.json({ error: 'Missing email or name' }, { status: 400 })
-    }
+    const { member } = auth
 
     const { error: emailErr } = await sendWelcomeEmail({
-      to: email,
-      memberName: name,
+      to: member.email,
+      memberName: member.full_name,
     })
 
     if (emailErr) {
-      return NextResponse.json({ error: 'Email send failed' }, { status: 500 })
+      console.error('Welcome email error:', emailErr)
+      return NextResponse.json({ error: 'Błąd wysyłki' }, { status: 500 })
     }
 
     return NextResponse.json({ success: true })
   } catch (err: any) {
-    return NextResponse.json({ error: err.message ?? 'Unknown error' }, { status: 500 })
+    console.error('Welcome email error:', err)
+    return NextResponse.json({ error: 'Nieznany błąd' }, { status: 500 })
   }
 }

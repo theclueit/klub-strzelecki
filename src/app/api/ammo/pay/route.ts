@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createServiceClient } from '@/lib/api-auth'
 import { p24RegisterTransaction } from '@/lib/przelewy24'
 import { randomUUID } from 'crypto'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://klub-strzelecki.vercel.app'
 
+// Token-based endpoint — no auth required (guest pays via unique token)
 export async function POST(req: NextRequest) {
   try {
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const supabase = createServiceClient()
     const { token } = await req.json()
 
     if (!token) {
@@ -85,6 +84,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, redirect_url: redirectUrl })
   } catch (err: any) {
     console.error('Ammo pay error:', err)
-    return NextResponse.json({ error: err.message ?? 'Błąd płatności' }, { status: 500 })
+    return NextResponse.json({ error: 'Błąd płatności' }, { status: 500 })
   }
 }

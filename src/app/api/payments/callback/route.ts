@@ -1,18 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createServiceClient } from '@/lib/api-auth'
 import { p24VerifyTransaction, verifyP24Callback } from '@/lib/przelewy24'
 import { sendPaymentConfirmation } from '@/lib/email'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
-
 export async function POST(req: NextRequest) {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
-    }
-
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const supabase = createServiceClient()
     const body = await req.json()
 
     const { sessionId, amount, currency, orderId } = body
@@ -159,6 +152,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: 'ok' })
   } catch (err: any) {
     console.error('P24 callback error:', err)
-    return NextResponse.json({ error: err.message ?? 'Callback error' }, { status: 500 })
+    return NextResponse.json({ error: 'Błąd przetwarzania callback' }, { status: 500 })
   }
 }

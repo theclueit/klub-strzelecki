@@ -6,9 +6,11 @@ const P24_CRC_KEY = process.env.P24_CRC_KEY || ''
 const P24_API_KEY = process.env.P24_API_KEY || ''
 const P24_SANDBOX = process.env.P24_SANDBOX === 'true'
 
-// Tryb zaślepki — symuluj płatność (do testów)
-// Włączany jawnie przez P24_STUB_MODE=true LUB gdy brak kluczy
-const P24_STUB_MODE = process.env.P24_STUB_MODE === 'true' || !P24_MERCHANT_ID || !P24_API_KEY || !P24_CRC_KEY
+// Tryb zaślepki — symuluj płatność (TYLKO do testów)
+// W production wymagane klucze P24 — bez nich płatności są zablokowane
+const IS_PRODUCTION = process.env.NODE_ENV === 'production'
+const P24_STUB_MODE = process.env.P24_STUB_MODE === 'true' && !IS_PRODUCTION
+const P24_KEYS_MISSING = !P24_MERCHANT_ID || !P24_API_KEY || !P24_CRC_KEY
 
 const BASE_URL = P24_SANDBOX
   ? 'https://sandbox.przelewy24.pl'
@@ -35,9 +37,15 @@ export interface P24RegisterParams {
 export async function p24RegisterTransaction(params: P24RegisterParams): Promise<{ token: string; redirectUrl: string }> {
   const { sessionId, amount, currency, description, email, urlReturn, urlStatus } = params
 
-  // Tryb zaślepki — symuluj sukces i przekieruj na stronę sukcesu
-  if (P24_STUB_MODE) {
-    console.log('[P24 STUB] Symulacja rejestracji transakcji:', { sessionId, amount, description })
+  // Blokada: brak kluczy w production = błąd
+  if (P24_KEYS_MISSING && IS_PRODUCTION) {
+    console.error('[P24] CRITICAL: Payment keys missing in production!')
+    throw new Error('Płatności są tymczasowo niedostępne')
+  }
+
+  // Tryb zaślepki — TYLKO w development
+  if (P24_STUB_MODE || (P24_KEYS_MISSING && !IS_PRODUCTION)) {
+    console.warn('[P24 STUB] Symulacja rejestracji transakcji (dev only):', { sessionId, amount, description })
     return {
       token: `STUB-${sessionId}`,
       redirectUrl: urlReturn,
@@ -84,10 +92,21 @@ export async function p24RegisterTransaction(params: P24RegisterParams): Promise
     throw new Error(data.error || 'Błąd rejestracji transakcji P24')
   }
 
-  return {
-    token: data.data.token,
-    redirectUrl: `${BASE_URL}/trnRequest/${data.data.token}`,
+  const redirectUrl = `${BASE_URL}/trnRequest/${data.data.token}`
+
+  // Validate redirect URL is a trusted P24 domain (prevent open redirect if API is compromised)
+  const allowedHosts = ['sandbox.przelewy24.pl', 'secure.przelewy24.pl']
+  try {
+    const urlHost = new URL(redirectUrl).host
+    if (!allowedHosts.includes(urlHost)) {
+      throw new Error(`Untrusted payment redirect host: ${urlHost}`)
+    }
+  } catch (e) {
+    if (e instanceof TypeError) throw new Error('Invalid payment redirect URL')
+    throw e
   }
+
+  return { token: data.data.token, redirectUrl }
 }
 
 export interface P24VerifyParams {
@@ -100,9 +119,15 @@ export interface P24VerifyParams {
 export async function p24VerifyTransaction(params: P24VerifyParams): Promise<boolean> {
   const { sessionId, orderId, amount, currency } = params
 
-  // Tryb zaślepki — zawsze sukces
-  if (P24_STUB_MODE) {
-    console.log('[P24 STUB] Symulacja weryfikacji transakcji:', { sessionId, orderId })
+  // Blokada w production
+  if (P24_KEYS_MISSING && IS_PRODUCTION) {
+    console.error('[P24] CRITICAL: Payment keys missing in production!')
+    return false
+  }
+
+  // Tryb zaślepki — TYLKO w development
+  if (P24_STUB_MODE || (P24_KEYS_MISSING && !IS_PRODUCTION)) {
+    console.warn('[P24 STUB] Symulacja weryfikacji transakcji (dev only):', { sessionId, orderId })
     return true
   }
 

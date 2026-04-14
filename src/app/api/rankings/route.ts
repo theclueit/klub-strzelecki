@@ -1,16 +1,16 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createServiceClient } from '@/lib/api-auth'
+import { checkRateLimit } from '@/lib/rate-limit'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
-
+// Rankings recalculation — triggered internally after result submission
 export async function POST() {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
+    // Rate limit: max 10 recalculations per minute (anti-DoS)
+    const rl = checkRateLimit('rankings:global', { limit: 10, windowSeconds: 60 })
+    if (!rl.success) {
+      return NextResponse.json({ message: 'Ranking update skipped (rate limited)' })
     }
-
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const supabase = createServiceClient()
 
     // Get all results grouped by member + discipline
     const { data: results, error: resultsErr } = await supabase
@@ -19,7 +19,8 @@ export async function POST() {
       .not('discipline_id', 'is', null)
 
     if (resultsErr) {
-      return NextResponse.json({ error: resultsErr.message }, { status: 500 })
+      console.error('Rankings fetch error:', resultsErr)
+      return NextResponse.json({ error: 'Błąd pobierania wyników' }, { status: 500 })
     }
 
     if (!results || results.length === 0) {
@@ -44,7 +45,6 @@ export async function POST() {
     const rows = Array.from(map.values()).map(entry => {
       const best = Math.max(...entry.scores)
       const avg = entry.scores.reduce((a, b) => a + b, 0) / entry.scores.length
-      // Points: best score + bonus for participation (5 pts per event, max 25)
       const participationBonus = Math.min(entry.events.size * 5, 25)
       const totalPoints = best + participationBonus
 
@@ -80,11 +80,13 @@ export async function POST() {
       .upsert(finalRows, { onConflict: 'member_id,discipline_id' })
 
     if (upsertErr) {
-      return NextResponse.json({ error: upsertErr.message }, { status: 500 })
+      console.error('Rankings upsert error:', upsertErr)
+      return NextResponse.json({ error: 'Błąd aktualizacji rankingów' }, { status: 500 })
     }
 
     return NextResponse.json({ message: 'Rankings updated', count: finalRows.length })
   } catch (err: any) {
-    return NextResponse.json({ error: err.message ?? 'Unknown error' }, { status: 500 })
+    console.error('Rankings error:', err)
+    return NextResponse.json({ error: 'Nieznany błąd' }, { status: 500 })
   }
 }

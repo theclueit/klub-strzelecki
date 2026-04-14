@@ -1,7 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireRole, isAuthError } from '@/lib/api-auth'
+import { checkRateLimit } from '@/lib/rate-limit'
 
 export async function POST(req: NextRequest) {
   try {
+    // Only judges and admins can use AI analysis (costs money per call)
+    const auth = await requireRole('judge', 'admin', 'superadmin')
+    if (isAuthError(auth)) return auth
+
+    // Rate limit: 30 AI analyses per hour per user (costs ~$0.01 each)
+    const rl = checkRateLimit(`analyze:${auth.member.id}`, { limit: 30, windowSeconds: 3600 })
+    if (!rl.success) {
+      return NextResponse.json({ error: 'Zbyt wiele analiz. Spróbuj za chwilę.' }, { status: 429 })
+    }
+
     const apiKey = process.env.ANTHROPIC_API_KEY
     if (!apiKey) {
       return NextResponse.json({ error: 'Brak klucza API Anthropic' }, { status: 500 })
@@ -20,6 +32,11 @@ export async function POST(req: NextRequest) {
     }
     const mediaType = match[1]
     const base64Data = match[2]
+
+    // Limit image size (max ~5MB base64)
+    if (base64Data.length > 7_000_000) {
+      return NextResponse.json({ error: 'Zdjęcie jest zbyt duże (max 5MB)' }, { status: 400 })
+    }
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -68,8 +85,7 @@ Jeśli nie możesz odczytać wyniku, zwróć confidence: "low" i oszacuj najlepi
     })
 
     if (!response.ok) {
-      const err = await response.text()
-      console.error('Anthropic API error:', err)
+      console.error('Anthropic API error:', await response.text())
       return NextResponse.json({ error: 'Błąd analizy AI' }, { status: 502 })
     }
 
@@ -81,7 +97,6 @@ Jeśli nie możesz odczytać wyniku, zwróć confidence: "low" i oszacuj najlepi
       const analysis = JSON.parse(text)
       return NextResponse.json({ ok: true, analysis })
     } catch {
-      // Try to extract JSON from text
       const jsonMatch = text.match(/\{[\s\S]*\}/)
       if (jsonMatch) {
         try {
@@ -94,6 +109,7 @@ Jeśli nie możesz odczytać wyniku, zwróć confidence: "low" i oszacuj najlepi
       return NextResponse.json({ ok: true, analysis: { notes: text, confidence: 'low' } })
     }
   } catch (err: any) {
-    return NextResponse.json({ error: err.message || 'Nieznany błąd' }, { status: 500 })
+    console.error('Analyze target error:', err)
+    return NextResponse.json({ error: 'Nieznany błąd' }, { status: 500 })
   }
 }

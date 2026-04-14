@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createServiceClient } from '@/lib/api-auth'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 import { p24RegisterTransaction } from '@/lib/przelewy24'
 import { sendRangeRulesEmail } from '@/lib/email'
 import { randomUUID } from 'crypto'
 import { timeToMin } from '@/lib/date'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://klub-strzelecki.vercel.app'
 
 interface BookingItem {
@@ -26,11 +25,14 @@ interface GuestData {
 
 export async function POST(req: NextRequest) {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
+    // Rate limit: 10 bookings per hour per IP
+    const ip = getClientIp(req)
+    const rl = checkRateLimit(`rec-book:${ip}`, { limit: 10, windowSeconds: 3600 })
+    if (!rl.success) {
+      return NextResponse.json({ error: 'Zbyt wiele rezerwacji. Spróbuj później.' }, { status: 429 })
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const supabase = createServiceClient()
 
     // Auto-wygaś nieopłacone rezerwacje starsze niż 15 min (odblokuj sloty)
     await supabase.from('recreational_bookings')
@@ -60,7 +62,25 @@ export async function POST(req: NextRequest) {
       }]
     }
 
-    const { member_id, notes } = body
+    const { notes } = body
+
+    // Resolve member_id from session if authenticated — don't trust body.member_id
+    let member_id: string | null = null
+    try {
+      const { createAuthClient } = await import('@/lib/api-auth')
+      const authClient = await createAuthClient()
+      const { data: { user } } = await authClient.auth.getUser()
+      if (user) {
+        const { data: member } = await supabase
+          .from('members')
+          .select('id')
+          .eq('auth_id', user.id)
+          .single()
+        if (member) member_id = member.id
+      }
+    } catch {
+      // Not authenticated — guest flow
+    }
 
     // Obsługa wielu osób (grupa) — tablica guests[]
     const guests: GuestData[] = body.guests
@@ -301,6 +321,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, booking_ids: bookingIds })
   } catch (err: any) {
     console.error('Recreational booking error:', err)
-    return NextResponse.json({ error: err.message ?? 'Błąd rezerwacji' }, { status: 500 })
+    return NextResponse.json({ error: 'Błąd rezerwacji' }, { status: 500 })
   }
 }

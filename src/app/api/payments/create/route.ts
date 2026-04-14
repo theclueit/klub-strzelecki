@@ -1,19 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { requireAuth, isAuthError } from '@/lib/api-auth'
 import { p24RegisterTransaction } from '@/lib/przelewy24'
 import { randomUUID } from 'crypto'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://klub-strzelecki.vercel.app'
 
 export async function POST(req: NextRequest) {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
-    }
+    const auth = await requireAuth()
+    if (isAuthError(auth)) return auth
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const { supabase, member } = auth
     const { registration_id } = await req.json()
 
     if (!registration_id) {
@@ -23,7 +20,7 @@ export async function POST(req: NextRequest) {
     // Get registration with member info
     const { data: reg, error: regErr } = await supabase
       .from('event_registrations')
-      .select('id, event_id, member_id, paid, member:members!event_registrations_member_id_fkey(id, email, full_name)')
+      .select('id, event_id, member_id, paid')
       .eq('id', registration_id)
       .single()
 
@@ -31,11 +28,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Rejestracja nie istnieje' }, { status: 404 })
     }
 
+    // Verify the registration belongs to the authenticated user
+    if (reg.member_id !== member.id && !['admin', 'superadmin'].includes(member.role)) {
+      return NextResponse.json({ error: 'Brak uprawnień' }, { status: 403 })
+    }
+
     if (reg.paid) {
       return NextResponse.json({ error: 'Rejestracja jest już opłacona' }, { status: 400 })
     }
-
-    const member = reg.member as any
 
     // Get event title
     const { data: event } = await supabase
@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
       .eq('id', reg.event_id)
       .single()
 
-    // Calculate total amount from registration_disciplines
+    // Calculate total amount from registration_disciplines (from DB, not frontend)
     const { data: regDiscs } = await supabase
       .from('registration_disciplines')
       .select('price_pln')
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
       amount: amountGrosze,
       currency: 'PLN',
       description: `Opłata startowa: ${event?.title || 'Zawody'}`,
-      email: member?.email || '',
+      email: member.email,
       urlReturn: `${appUrl}/platnosc/sukces?session=${sessionId}`,
       urlStatus: `${appUrl}/api/payments/callback`,
     })
@@ -84,6 +84,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, redirect_url: redirectUrl })
   } catch (err: any) {
     console.error('Payment create error:', err)
-    return NextResponse.json({ error: err.message ?? 'Błąd tworzenia płatności' }, { status: 500 })
+    return NextResponse.json({ error: 'Błąd tworzenia płatności' }, { status: 500 })
   }
 }

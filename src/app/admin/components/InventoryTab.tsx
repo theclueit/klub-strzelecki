@@ -16,6 +16,7 @@ interface InventoryForm {
   quantity: string
   unit: string
   purchase_price_pln: string
+  sell_price_pln: string
   purchase_date: string
   supplier: string
   min_stock_level: string
@@ -222,7 +223,8 @@ export default function InventoryTab({
                           <h3 className="font-semibold text-sm">{item.name}</h3>
                           <div className="text-xs text-muted mt-1 flex flex-wrap gap-x-4 gap-y-0.5">
                             <span>Stan: <span className="text-foreground font-medium">{item.quantity.toLocaleString('pl')} {item.unit}</span></span>
-                            <span>Cena zakupu: <span className="text-foreground">{Number(item.purchase_price_pln).toFixed(2)} zl/{item.unit}</span></span>
+                            <span>Cena zakupu: <span className="text-foreground">{Number(item.purchase_price_pln).toFixed(2)} zł/{item.unit}</span></span>
+                            {item.sell_price_pln != null && <span>Cena sprzedaży: <span className="text-foreground">{Number(item.sell_price_pln).toFixed(2)} zł/{item.unit}</span></span>}
                             <span>Wartosc: <span className="text-foreground font-medium">{value.toLocaleString('pl', { minimumFractionDigits: 2 })} zł</span></span>
                             {item.location && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{item.location}</span>}
                             {item.purchase_date && <span>Zakup: {new Date(item.purchase_date).toLocaleDateString('pl')}</span>}
@@ -298,6 +300,12 @@ export default function InventoryTab({
                   <label className="text-xs text-muted block mb-1">Cena zakupu (zł/szt)</label>
                   <input type="number" step="0.01" min="0" value={inventoryForm.purchase_price_pln} onChange={e => setInventoryForm(f => ({ ...f, purchase_price_pln: e.target.value }))} className={inputClass} />
                 </div>
+                <div>
+                  <label className="text-xs text-muted block mb-1">Cena sprzedaży (zł/szt)</label>
+                  <input type="number" step="0.01" min="0" value={inventoryForm.sell_price_pln} onChange={e => setInventoryForm(f => ({ ...f, sell_price_pln: e.target.value }))} className={inputClass} placeholder="opcjonalne" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-muted block mb-1">Data zakupu</label>
                   <input type="date" value={inventoryForm.purchase_date} onChange={e => setInventoryForm(f => ({ ...f, purchase_date: e.target.value }))} className={inputClass} />

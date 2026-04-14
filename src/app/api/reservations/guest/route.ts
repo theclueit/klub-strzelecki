@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createServiceClient } from '@/lib/api-auth'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
-
-// Guest lane reservation — auto-creates member account
+// Guest lane reservation — public endpoint, auto-creates member account
 export async function POST(req: NextRequest) {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
+    // Rate limit: 10 guest reservations per hour per IP
+    const ip = getClientIp(req)
+    const rl = checkRateLimit(`guest-res:${ip}`, { limit: 10, windowSeconds: 3600 })
+    if (!rl.success) {
+      return NextResponse.json({ error: 'Zbyt wiele rezerwacji. Spróbuj później.' }, { status: 429 })
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const supabase = createServiceClient()
     const body = await req.json()
     const {
       lane_id, station_number, stations_count, reservation_date,
@@ -25,6 +26,11 @@ export async function POST(req: NextRequest) {
     }
     if (!guest_name || !guest_email || !guest_address || !guest_document) {
       return NextResponse.json({ error: 'Podaj imię, email, adres i numer dokumentu' }, { status: 400 })
+    }
+
+    // Validate email format
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guest_email)) {
+      return NextResponse.json({ error: 'Nieprawidłowy format email' }, { status: 400 })
     }
 
     // Find or create member by email
@@ -83,7 +89,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Calculate price
+    // Calculate price from DB
     const startMin = parseInt(start_time.split(':')[0]) * 60 + parseInt(start_time.split(':')[1] || '0')
     const endMin = parseInt(end_time.split(':')[0]) * 60 + parseInt(end_time.split(':')[1] || '0')
     const hours = (endMin - startMin) / 60
@@ -108,12 +114,9 @@ export async function POST(req: NextRequest) {
       .insert(inserts)
       .select()
 
-    if (error) throw error
-
-    // Handle payment if requested
-    if (pay_now && totalPln > 0 && resArr?.[0]) {
-      // TODO: integrate with P24 payment for guest reservations
-      // For now return success without redirect
+    if (error) {
+      console.error('Guest reservation insert error:', error)
+      return NextResponse.json({ error: 'Błąd rezerwacji' }, { status: 500 })
     }
 
     return NextResponse.json({
@@ -124,6 +127,6 @@ export async function POST(req: NextRequest) {
     })
   } catch (err: any) {
     console.error('Guest reservation error:', err)
-    return NextResponse.json({ error: err.message ?? 'Błąd rezerwacji' }, { status: 500 })
+    return NextResponse.json({ error: 'Błąd rezerwacji' }, { status: 500 })
   }
 }

@@ -1,31 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { requireAuth, isAuthError } from '@/lib/api-auth'
 import { sendRegistrationConfirmation } from '@/lib/email'
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 export async function POST(req: NextRequest) {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
-    }
+    const auth = await requireAuth()
+    if (isAuthError(auth)) return auth
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const { supabase, member: authMember } = auth
     const body = await req.json()
-    const { event_id, member_id, disciplines } = body as {
+    const { event_id, disciplines } = body as {
       event_id: string
-      member_id: string
       disciplines: Array<{
         event_discipline_id: string
         event_discipline_slot_id?: string
         own_weapon: boolean
-        price_pln: number
       }>
     }
 
-    if (!event_id || !member_id) {
-      return NextResponse.json({ error: 'Brak event_id lub member_id' }, { status: 400 })
+    // Force member_id from session — prevent IDOR
+    const member_id = authMember.id
+
+    if (!event_id) {
+      return NextResponse.json({ error: 'Brak event_id' }, { status: 400 })
     }
 
     // Check event exists and is published
@@ -46,17 +43,6 @@ export async function POST(req: NextRequest) {
     // Check event hasn't passed
     if (new Date(event.start_date) < new Date()) {
       return NextResponse.json({ error: 'Wydarzenie już się odbyło' }, { status: 400 })
-    }
-
-    // Check member exists
-    const { data: member, error: memberErr } = await supabase
-      .from('members')
-      .select('id, full_name, email')
-      .eq('id', member_id)
-      .single()
-
-    if (memberErr || !member) {
-      return NextResponse.json({ error: 'Członek nie istnieje' }, { status: 404 })
     }
 
     // Check not already registered
@@ -143,37 +129,44 @@ export async function POST(req: NextRequest) {
       if (regErr.code === '23505') {
         return NextResponse.json({ error: 'Już jesteś zapisany na to wydarzenie' }, { status: 409 })
       }
-      return NextResponse.json({ error: 'Błąd zapisu: ' + regErr.message }, { status: 500 })
+      console.error('Registration insert error:', regErr)
+      return NextResponse.json({ error: 'Błąd zapisu' }, { status: 500 })
     }
 
-    // Insert discipline selections
+    // Insert discipline selections — get price from DB, not from frontend
     let disciplineNames: string[] = []
     if (disciplines && disciplines.length > 0 && regData) {
+      const edIds = disciplines.map(d => d.event_discipline_id)
+      const { data: eds } = await supabase
+        .from('event_disciplines')
+        .select('id, price_pln, discipline:disciplines!discipline_id(name)')
+        .in('id', edIds)
+
+      const priceMap = new Map((eds || []).map(ed => [ed.id, Number(ed.price_pln) || 0]))
+      disciplineNames = (eds || []).map((ed: any) => ed.discipline?.name).filter(Boolean)
+
       const rows = disciplines.map(d => ({
         event_discipline_id: d.event_discipline_id,
         member_registration_id: regData.id,
-        price_pln: d.price_pln,
+        price_pln: priceMap.get(d.event_discipline_id) ?? 0, // Price from DB
         own_weapon: d.own_weapon,
         ...(d.event_discipline_slot_id ? { event_discipline_slot_id: d.event_discipline_slot_id } : {}),
       }))
 
       await supabase.from('registration_disciplines').insert(rows)
-
-      // Get discipline names for email
-      const edIds = disciplines.map(d => d.event_discipline_id)
-      const { data: eds } = await supabase
-        .from('event_disciplines')
-        .select('id, discipline:disciplines!discipline_id(name)')
-        .in('id', edIds)
-
-      disciplineNames = (eds || []).map((ed: any) => ed.discipline?.name).filter(Boolean)
     }
 
     // Send confirmation email
-    if (member.email) {
+    const { data: memberData } = await supabase
+      .from('members')
+      .select('email, full_name')
+      .eq('id', member_id)
+      .single()
+
+    if (memberData?.email) {
       sendRegistrationConfirmation({
-        to: member.email,
-        memberName: member.full_name,
+        to: memberData.email,
+        memberName: memberData.full_name,
         eventTitle: event.title,
         eventDate: event.start_date,
         eventLocation: event.location,
@@ -184,6 +177,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, registration_id: regData.id })
   } catch (err: any) {
-    return NextResponse.json({ error: err.message ?? 'Nieznany błąd' }, { status: 500 })
+    console.error('Registration API error:', err)
+    return NextResponse.json({ error: 'Nieznany błąd' }, { status: 500 })
   }
 }

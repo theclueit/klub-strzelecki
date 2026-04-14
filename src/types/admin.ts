@@ -59,10 +59,12 @@ export interface InventoryItem {
   quantity: number
   unit: string
   purchase_price_pln: number
+  sell_price_pln: number | null
   purchase_date: string | null
   supplier: string | null
   min_stock_level: number
   location: string | null
+  updated_at: string | null
 }
 
 export interface InventoryTransaction {

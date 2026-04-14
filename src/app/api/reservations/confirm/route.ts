@@ -1,37 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
+import { createServiceClient, createAuthClient } from '@/lib/api-auth'
 
 // POST — convert hold → confirmed reservation
+// Token-based — hold_token acts as auth (short-lived, random UUID)
 export async function POST(req: NextRequest) {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
-    }
-
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const supabase = createServiceClient()
     const body = await req.json()
     const {
-      hold_token, member_id, guest_name, guest_email,
+      hold_token, guest_name, guest_email,
       guest_phone, guest_address, guest_document,
       notes, paid, pay_now,
     } = body
+
+    // Resolve member_id from session if authenticated — prevent IDOR
+    let member_id: string | null = null
+    try {
+      const authClient = await createAuthClient()
+      const { data: { user } } = await authClient.auth.getUser()
+      if (user) {
+        const { data: member } = await supabase
+          .from('members')
+          .select('id')
+          .eq('auth_id', user.id)
+          .single()
+        if (member) member_id = member.id
+      }
+    } catch {
+      // Not authenticated — guest flow, member_id stays null
+    }
 
     if (!hold_token) {
       return NextResponse.json({ error: 'Brak hold_token' }, { status: 400 })
     }
 
-    // Verify hold is still active
+    // Verify hold is still active — include time/lane info for price calculation
     const { data: holds, error: holdErr } = await supabase
       .from('lane_reservations')
-      .select('id, lane_id')
+      .select('id, lane_id, start_time, end_time, lane:shooting_lanes!lane_id(price_per_hour_pln)')
       .eq('hold_token', hold_token)
       .eq('status', 'hold')
       .gt('hold_expires_at', new Date().toISOString())
 
-    if (holdErr) throw holdErr
+    if (holdErr) {
+      console.error('Hold verify error:', holdErr)
+      return NextResponse.json({ error: 'Błąd weryfikacji' }, { status: 500 })
+    }
     if (!holds || holds.length === 0) {
       return NextResponse.json({ error: 'Rezerwacja wygasła. Wybierz slot ponownie.' }, { status: 410 })
     }
@@ -67,6 +81,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Calculate whether reservation is free (price = 0) server-side
+    // Don't trust client-sent `paid` flag — only mark as paid if genuinely free
+    const firstHold = holds[0] as any
+    const lane = firstHold?.lane
+    const pricePerHour = Number(lane?.price_per_hour_pln || 0)
+    const startH = parseInt(firstHold.start_time?.split(':')[0] || '0')
+    const endH = parseInt(firstHold.end_time?.split(':')[0] || '0')
+    const hours = endH - startH
+    const isFree = pricePerHour * hours * holds.length <= 0
+
     // Convert hold → reserved
     const { data: updated, error: updateErr } = await supabase
       .from('lane_reservations')
@@ -75,7 +99,7 @@ export async function POST(req: NextRequest) {
         member_id: resolvedMemberId || null,
         guest_name: guest_name || null,
         notes: notes || null,
-        paid: paid || false,
+        paid: isFree, // Only mark as paid if genuinely free — payment callback handles the rest
         hold_token: null,
         hold_expires_at: null,
       })
@@ -83,13 +107,16 @@ export async function POST(req: NextRequest) {
       .eq('status', 'hold')
       .select()
 
-    if (updateErr) throw updateErr
+    if (updateErr) {
+      console.error('Confirm update error:', updateErr)
+      return NextResponse.json({ error: 'Błąd potwierdzenia' }, { status: 500 })
+    }
     if (!updated || updated.length === 0) {
       return NextResponse.json({ error: 'Rezerwacja wygasła' }, { status: 410 })
     }
 
     // Handle payment if requested
-    if (pay_now && !paid && updated[0]) {
+    if (pay_now && !isFree && updated[0]) {
       const payRes = await fetch(new URL('/api/reservations/pay', req.url).toString(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -107,6 +134,6 @@ export async function POST(req: NextRequest) {
     })
   } catch (err: any) {
     console.error('Confirm reservation error:', err)
-    return NextResponse.json({ error: err.message ?? 'Błąd' }, { status: 500 })
+    return NextResponse.json({ error: 'Błąd potwierdzenia' }, { status: 500 })
   }
 }

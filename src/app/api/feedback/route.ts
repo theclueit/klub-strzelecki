@@ -1,9 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 
-const GITHUB_REPO = 'theclueit/klub-strzelecki'
+const GITHUB_REPO = process.env.GITHUB_FEEDBACK_REPO || 'theclueit/klub-strzelecki'
 
 export async function POST(req: NextRequest) {
   try {
+    // Rate limit: 5 feedback per hour per IP
+    const ip = getClientIp(req)
+    const rl = checkRateLimit(`feedback:${ip}`, { limit: 5, windowSeconds: 3600 })
+    if (!rl.success) {
+      return NextResponse.json({ error: 'Zbyt wiele zgłoszeń. Spróbuj później.' }, { status: 429 })
+    }
+
     const { type, title, description, email } = await req.json()
 
     if (!title || !description) {
@@ -55,8 +63,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Nie udało się utworzyć zgłoszenia' }, { status: 500 })
     }
 
-    const issue = await res.json()
-    return NextResponse.json({ success: true, issueNumber: issue.number, url: issue.html_url })
+    await res.json()
+    return NextResponse.json({ success: true })
   } catch (err) {
     console.error('[FEEDBACK] Error:', err)
     return NextResponse.json({ error: 'Wystąpił błąd' }, { status: 500 })

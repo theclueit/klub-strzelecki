@@ -171,7 +171,6 @@ export function useBooking({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           hold_token: holdToken,
-          member_id: member?.id || null,
           guest_name: member ? (member as any).full_name : guestBooking.full_name,
           guest_email: !member ? guestBooking.email : undefined,
           guest_phone: !member ? (guestBooking.phone || null) : undefined,
@@ -228,12 +227,21 @@ export function useBooking({
     }
   }
 
-  // Rejestrator strzelnicowy oznacza jako opłacone (gotówka)
+  // Rejestrator strzelnicowy oznacza jako opłacone (gotówka) — via API with auth check
   const handleMarkPaid = async (resId: string) => {
     if (!confirm('Oznaczyć rezerwację jako opłaconą (gotówka)?')) return
     setPaymentLoading(resId)
     try {
-      await supabase.from('lane_reservations').update({ paid: true }).eq('id', resId)
+      const res = await fetch('/api/reservations/mark-paid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reservation_id: resId }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        alert(data.error || 'Błąd')
+        return
+      }
       loadReservations()
     } catch {
       alert('Błąd')

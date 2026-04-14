@@ -1,18 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createServiceClient } from '@/lib/api-auth'
 import { sendGuestRegistrationConfirmation } from '@/lib/email'
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 
 // Guest registration
 export async function POST(req: NextRequest) {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
+    // Rate limit: 10 registrations per hour per IP
+    const ip = getClientIp(req)
+    const rl = checkRateLimit(`rejestracja:${ip}`, { limit: 10, windowSeconds: 3600 })
+    if (!rl.success) {
+      return NextResponse.json({ error: 'Zbyt wiele rejestracji. Spróbuj później.' }, { status: 429 })
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const supabase = createServiceClient()
     const body = await req.json()
     const { event_id, full_name, email, phone, experience, has_license, license_number, message, disciplines } = body as {
       event_id: string
@@ -27,7 +28,6 @@ export async function POST(req: NextRequest) {
         event_discipline_id: string
         event_discipline_slot_id?: string
         own_weapon: boolean
-        price_pln: number
       }>
     }
 
@@ -117,28 +117,31 @@ export async function POST(req: NextRequest) {
       if (regErr.code === '23505') {
         return NextResponse.json({ error: 'Ten email jest już zapisany na to wydarzenie' }, { status: 409 })
       }
-      return NextResponse.json({ error: 'Błąd zapisu: ' + regErr.message }, { status: 500 })
+      console.error('Guest registration insert error:', regErr)
+      return NextResponse.json({ error: 'Błąd zapisu' }, { status: 500 })
     }
 
-    // Insert discipline selections
+    // Insert discipline selections — get prices from DB, not from frontend
     let disciplineNames: string[] = []
     if (disciplines && disciplines.length > 0 && regData) {
+      // Fetch prices from DB to prevent price tampering
+      const edIds = disciplines.map(d => d.event_discipline_id)
+      const { data: eds } = await supabase
+        .from('event_disciplines')
+        .select('id, price_pln, discipline:disciplines!discipline_id(name)')
+        .in('id', edIds)
+
+      const priceMap = new Map((eds || []).map(ed => [ed.id, Number(ed.price_pln) || 0]))
+
       const rows = disciplines.map(d => ({
         event_discipline_id: d.event_discipline_id,
         guest_registration_id: regData.id,
-        price_pln: d.price_pln,
+        price_pln: priceMap.get(d.event_discipline_id) ?? 0, // Price from DB, not frontend
         own_weapon: d.own_weapon,
         ...(d.event_discipline_slot_id ? { event_discipline_slot_id: d.event_discipline_slot_id } : {}),
       }))
 
       await supabase.from('registration_disciplines').insert(rows)
-
-      // Get discipline names for email
-      const edIds = disciplines.map(d => d.event_discipline_id)
-      const { data: eds } = await supabase
-        .from('event_disciplines')
-        .select('id, discipline:disciplines!discipline_id(name)')
-        .in('id', edIds)
 
       disciplineNames = (eds || []).map((ed: any) => ed.discipline?.name).filter(Boolean)
     }
@@ -155,6 +158,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, registration_id: regData.id })
   } catch (err: any) {
-    return NextResponse.json({ error: err.message ?? 'Nieznany błąd' }, { status: 500 })
+    console.error('Guest registration error:', err)
+    return NextResponse.json({ error: 'Nieznany błąd' }, { status: 500 })
   }
 }

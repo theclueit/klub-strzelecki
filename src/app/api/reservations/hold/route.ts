@@ -1,19 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createServiceClient } from '@/lib/api-auth'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
 import { randomUUID } from 'crypto'
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 const HOLD_DURATION_SECONDS = 180 // 3 minutes
 
 // POST — create a hold (temporary lock) on slot(s)
+// Public endpoint — guests can hold slots before providing details
 export async function POST(req: NextRequest) {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
+    // Rate limit: 20 holds per hour per IP (prevent DoS flood)
+    const ip = getClientIp(req)
+    const rl = checkRateLimit(`hold:${ip}`, { limit: 20, windowSeconds: 3600 })
+    if (!rl.success) {
+      return NextResponse.json({ error: 'Zbyt wiele prób rezerwacji. Spróbuj później.' }, { status: 429 })
     }
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+
+    const supabase = createServiceClient()
     const body = await req.json()
     const { lane_id, station_number, stations_count, reservation_date, start_time, end_time } = body
 
@@ -46,11 +49,11 @@ export async function POST(req: NextRequest) {
       .select('id')
 
     if (error) {
-      // EXCLUDE constraint violation = slot taken
       if (error.code === '23P01') {
         return NextResponse.json({ error: 'Slot jest już zajęty' }, { status: 409 })
       }
-      throw error
+      console.error('Hold create error:', error)
+      return NextResponse.json({ error: 'Błąd rezerwacji' }, { status: 500 })
     }
 
     return NextResponse.json({
@@ -61,17 +64,14 @@ export async function POST(req: NextRequest) {
     })
   } catch (err: any) {
     console.error('Hold create error:', err)
-    return NextResponse.json({ error: err.message ?? 'Błąd' }, { status: 500 })
+    return NextResponse.json({ error: 'Błąd rezerwacji' }, { status: 500 })
   }
 }
 
 // PATCH — extend a hold (give more time)
 export async function PATCH(req: NextRequest) {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
-    }
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const supabase = createServiceClient()
     const body = await req.json()
     const { hold_token } = body
 
@@ -89,7 +89,10 @@ export async function PATCH(req: NextRequest) {
       .gt('hold_expires_at', new Date().toISOString())
       .select('id')
 
-    if (error) throw error
+    if (error) {
+      console.error('Hold extend error:', error)
+      return NextResponse.json({ error: 'Błąd przedłużenia' }, { status: 500 })
+    }
     if (!data || data.length === 0) {
       return NextResponse.json({ error: 'Hold wygasł lub nie istnieje' }, { status: 410 })
     }
@@ -101,17 +104,14 @@ export async function PATCH(req: NextRequest) {
     })
   } catch (err: any) {
     console.error('Hold extend error:', err)
-    return NextResponse.json({ error: err.message ?? 'Błąd' }, { status: 500 })
+    return NextResponse.json({ error: 'Błąd przedłużenia' }, { status: 500 })
   }
 }
 
 // DELETE — release a hold (user cancelled)
 export async function DELETE(req: NextRequest) {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
-    }
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+    const supabase = createServiceClient()
     const { hold_token } = await req.json()
 
     if (!hold_token) {
@@ -127,6 +127,6 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ success: true })
   } catch (err: any) {
     console.error('Hold release error:', err)
-    return NextResponse.json({ error: err.message ?? 'Błąd' }, { status: 500 })
+    return NextResponse.json({ error: 'Błąd anulowania' }, { status: 500 })
   }
 }

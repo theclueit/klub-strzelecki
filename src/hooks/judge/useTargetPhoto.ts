@@ -46,6 +46,9 @@ export function useTargetPhoto(supabase: SupabaseClient) {
     }
   }
 
+  const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
+  const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic']
+
   function handlePhotoChange(
     e: React.ChangeEvent<HTMLInputElement>,
     disciplineName: string | null,
@@ -53,6 +56,19 @@ export function useTargetPhoto(supabase: SupabaseClient) {
   ) {
     const file = e.target.files?.[0]
     if (!file) return
+
+    // Validate file type
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      alert('Nieprawidłowy format pliku. Dozwolone: JPEG, PNG, WebP, HEIC')
+      return
+    }
+
+    // Validate file size
+    if (file.size > MAX_FILE_SIZE) {
+      alert('Plik jest zbyt duży (max 10MB)')
+      return
+    }
+
     const reader = new FileReader()
     reader.onload = async (ev) => {
       const raw = ev.target?.result as string

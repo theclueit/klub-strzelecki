@@ -1,22 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { requireAuth, isAuthError } from '@/lib/api-auth'
 import { sendRegistrationConfirmation } from '@/lib/email'
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 export async function POST(req: NextRequest) {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing server config' }, { status: 500 })
-    }
+    const auth = await requireAuth()
+    if (isAuthError(auth)) return auth
 
+    const { supabase, member: authMember } = auth
     const { registration_id } = await req.json()
     if (!registration_id) {
       return NextResponse.json({ error: 'Missing registration_id' }, { status: 400 })
     }
-
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
     const { data: reg, error: regErr } = await supabase
       .from('event_registrations')
@@ -26,6 +21,11 @@ export async function POST(req: NextRequest) {
 
     if (regErr || !reg) {
       return NextResponse.json({ error: 'Registration not found' }, { status: 404 })
+    }
+
+    // Only allow resending own confirmation, or admin can resend any
+    if (reg.member_id !== authMember.id && !['admin', 'superadmin'].includes(authMember.role)) {
+      return NextResponse.json({ error: 'Brak uprawnień' }, { status: 403 })
     }
 
     const member = reg.member as any
@@ -53,11 +53,13 @@ export async function POST(req: NextRequest) {
     })
 
     if (emailErr) {
-      return NextResponse.json({ error: 'Email send failed' }, { status: 500 })
+      console.error('Registration confirm email error:', emailErr)
+      return NextResponse.json({ error: 'Błąd wysyłki' }, { status: 500 })
     }
 
     return NextResponse.json({ success: true })
   } catch (err: any) {
-    return NextResponse.json({ error: err.message ?? 'Unknown error' }, { status: 500 })
+    console.error('Registration confirm error:', err)
+    return NextResponse.json({ error: 'Nieznany błąd' }, { status: 500 })
   }
 }

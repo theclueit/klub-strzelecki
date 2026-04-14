@@ -1,17 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
+import { createAuthClient, createServiceClient } from '@/lib/api-auth'
 
 export async function POST(req: NextRequest) {
   try {
-    if (!supabaseServiceKey) {
-      return NextResponse.json({ error: 'Missing config' }, { status: 500 })
+    // Verify the user is actually authenticated before logging
+    const authClient = await createAuthClient()
+    const { data: { user }, error } = await authClient.auth.getUser()
+
+    if (error || !user) {
+      return NextResponse.json({ error: 'Nieautoryzowany' }, { status: 401 })
     }
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+
+    const supabase = createServiceClient()
     const body = await req.json()
-    const { member_id, auth_id, email, full_name, event_type } = body
+    const { event_type } = body
+
+    // Get member info from session, not from body (prevent spoofing)
+    const { data: member } = await supabase
+      .from('members')
+      .select('id, full_name')
+      .eq('auth_id', user.id)
+      .single()
 
     const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
       || req.headers.get('x-real-ip')
@@ -19,10 +28,10 @@ export async function POST(req: NextRequest) {
     const userAgent = req.headers.get('user-agent') || 'unknown'
 
     await supabase.from('login_history').insert({
-      member_id: member_id || null,
-      auth_id: auth_id || null,
-      email: email || null,
-      full_name: full_name || null,
+      member_id: member?.id || null,
+      auth_id: user.id,
+      email: user.email || null,
+      full_name: member?.full_name || null,
       ip_address: ip,
       user_agent: userAgent,
       event_type: event_type || 'login',
@@ -31,6 +40,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   } catch (err: any) {
     console.error('Log login error:', err)
-    return NextResponse.json({ error: err.message }, { status: 500 })
+    return NextResponse.json({ error: 'Błąd logowania' }, { status: 500 })
   }
 }
