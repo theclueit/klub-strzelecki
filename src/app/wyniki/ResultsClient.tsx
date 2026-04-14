@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Trophy, Search, X, Printer, Camera } from 'lucide-react'
+import { Trophy, Search, X, Printer, Camera, Download } from 'lucide-react'
 import Link from 'next/link'
 
 interface ResultRow {
@@ -84,9 +84,9 @@ export default function ResultsClient({ results }: { results: ResultRow[] }) {
   const matchCount = filteredResults.length
   const inputClass = "w-full bg-background border border-border rounded-lg px-4 py-2.5 text-foreground placeholder:text-muted focus:outline-none focus:border-primary text-sm"
 
-  function printEventResults(eventId: string) {
+  function buildResultsHtml(eventId: string) {
     const group = sorted.find(g => g.event.id === eventId)
-    if (!group) return
+    if (!group) return null
 
     const ev = group.event
     const eventDate = new Date(ev.start_date).toLocaleDateString('pl-PL', {
@@ -205,14 +205,44 @@ export default function ResultsClient({ results }: { results: ResultRow[] }) {
     </div>`
 
     html += `</body></html>`
+    return { html, title: ev.title }
+  }
 
+  function printEventResults(eventId: string) {
+    const result = buildResultsHtml(eventId)
+    if (!result) return
     const printWindow = window.open('', '_blank')
     if (printWindow) {
-      printWindow.document.write(html)
+      printWindow.document.write(result.html)
       printWindow.document.close()
       printWindow.focus()
       setTimeout(() => printWindow.print(), 300)
     }
+  }
+
+  async function downloadEventPdf(eventId: string) {
+    const result = buildResultsHtml(eventId)
+    if (!result) return
+    const html2pdf = (await import('html2pdf.js')).default
+    const container = document.createElement('div')
+    container.innerHTML = result.html
+    // Extract just the body content and styles
+    const styleContent = container.querySelector('style')?.textContent || ''
+    const bodyContent = container.querySelector('body')?.innerHTML || result.html
+    const wrapper = document.createElement('div')
+    const style = document.createElement('style')
+    style.textContent = styleContent
+    wrapper.appendChild(style)
+    wrapper.innerHTML += bodyContent
+    document.body.appendChild(wrapper)
+    await html2pdf().set({
+      margin: [10, 12],
+      filename: `Wyniki - ${result.title}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' },
+    }).from(wrapper).save()
+    document.body.removeChild(wrapper)
   }
 
   return (
@@ -277,14 +307,24 @@ export default function ResultsClient({ results }: { results: ResultRow[] }) {
                   </div>
                   <div className="flex items-center justify-between">
                     <h2 className="text-xl font-bold">{ev.title}</h2>
-                    <button
-                      onClick={() => printEventResults(ev.id)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-card-hover hover:border-primary hover:text-primary transition-colors"
-                      title="Drukuj / zapisz PDF"
-                    >
-                      <Printer className="w-3.5 h-3.5" />
-                      Drukuj wyniki
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => printEventResults(ev.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-card-hover hover:border-primary hover:text-primary transition-colors"
+                        title="Drukuj wyniki"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        Drukuj
+                      </button>
+                      <button
+                        onClick={() => downloadEventPdf(ev.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-card-hover hover:border-primary hover:text-primary transition-colors"
+                        title="Pobierz PDF"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        PDF
+                      </button>
+                    </div>
                   </div>
                   <p className="text-sm text-muted mt-1">
                     {group.results.length} {group.results.length === 1 ? 'wynik' : group.results.length < 5 ? 'wyniki' : 'wyników'}
