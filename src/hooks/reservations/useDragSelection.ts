@@ -14,7 +14,9 @@ export function useDragSelection({ slots, slotMap, isPast, openBookingFromSelect
   const [dragStart, setDragStart] = useState<{ sn: number; slotIdx: number } | null>(null)
   const [dragEnd, setDragEnd] = useState<{ sn: number; slotIdx: number } | null>(null)
   const isDragging = useRef(false)
-  const pointerIsMouse = useRef(false)
+  // Tracks whether the last interaction was a mouse drag — used to skip the
+  // click event that fires right after mouseup so we don't double-trigger.
+  const skipNextClick = useRef(false)
   const dragStartRef = useRef(dragStart)
   const dragEndRef = useRef(dragEnd)
   dragStartRef.current = dragStart
@@ -53,7 +55,6 @@ export function useDragSelection({ slots, slotMap, isPast, openBookingFromSelect
     if (pointerType === 'mouse') {
       // Desktop: start drag — update refs immediately for mouseup handler
       const pos = { sn, slotIdx }
-      pointerIsMouse.current = true
       isDragging.current = true
       dragStartRef.current = pos
       dragEndRef.current = pos
@@ -76,32 +77,29 @@ export function useDragSelection({ slots, slotMap, isPast, openBookingFromSelect
 
     const start = dragStartRef.current
     const end = dragEndRef.current
-    if (!start || !end) {
-      clearDrag()
-      return
-    }
 
-    // Clear drag state BEFORE calling async openBooking — prevents "stuck" selection
+    // Clear visual selection immediately
     dragStartRef.current = null
     dragEndRef.current = null
     setDragStart(null)
     setDragEnd(null)
 
-    // Open booking from drag selection (uses ref to avoid stale closure)
-    openBookingRef.current(start, end)
+    // Block the click event that fires right after mouseup
+    skipNextClick.current = true
 
-    // Block the upcoming click event from re-triggering
-    pointerIsMouse.current = true
-    setTimeout(() => { pointerIsMouse.current = false }, 50)
+    if (!start || !end) return
+
+    // Open booking (uses ref to avoid stale closure)
+    openBookingRef.current(start, end)
   }, [clearDrag])
 
   // Click handler: tap-to-select (primarily for touch, also works as fallback)
   // 1st click = start, 2nd click = end -> open booking
   const handleSlotClick = (sn: number, slotIdx: number) => {
     if (isPast) return
-    // Skip if this click came from a mouse drag-end (already handled)
-    if (pointerIsMouse.current) {
-      pointerIsMouse.current = false
+    // Skip if this click came from a mouse drag-end (already handled by handleDragEnd)
+    if (skipNextClick.current) {
+      skipNextClick.current = false
       return
     }
 
@@ -111,11 +109,11 @@ export function useDragSelection({ slots, slotMap, isPast, openBookingFromSelect
       setDragEnd({ sn, slotIdx })
     } else {
       // Second tap — mark end and open booking
+      const start = dragStart
       const end = { sn, slotIdx }
-      // Clear state before async call
       setDragStart(null)
       setDragEnd(null)
-      openBookingRef.current(dragStart, end)
+      openBookingRef.current(start, end)
     }
   }
 
