@@ -102,7 +102,7 @@ export default function ResultsClient({ results }: { results: ResultRow[] }) {
     }
 
     let html = `<!DOCTYPE html><html><head><title>Wyniki - ${ev.title}</title><style>
-      @page { size: A4 portrait; margin: 12mm 15mm; }
+      @page { size: A4 landscape; margin: 12mm 15mm; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #000; }
       .header { text-align: center; margin-bottom: 8mm; padding-bottom: 4mm; border-bottom: 2px solid #000; }
