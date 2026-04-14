@@ -540,7 +540,7 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
                                 key={slotTime}
                                 className="py-0.5 px-0.5 border-l border-border/30 select-none"
                                 onPointerDown={e => { e.preventDefault(); canBook && handlePointerDown(sn, slotIdx, e.pointerType) }}
-                                onMouseEnter={() => canBook && handleDragMove(sn, slotIdx)}
+                                onPointerEnter={() => canBook && handleDragMove(sn, slotIdx)}
                                 onClick={() => canBook && handleSlotClick(sn, slotIdx)}
                                 title={tooClose ? `Rezerwacja online min. ${selectedLane?.min_advance_minutes ?? 60} min wcześniej` : undefined}
                               >

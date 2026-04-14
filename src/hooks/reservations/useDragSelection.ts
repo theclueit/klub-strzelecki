@@ -117,13 +117,19 @@ export function useDragSelection({ slots, slotMap, isPast, openBookingFromSelect
     }
   }
 
-  // Global mouseup listener to end drag (desktop only)
+  // Global pointerup listener to end drag (desktop only)
+  // Must use pointerup — not mouseup — because e.preventDefault() on
+  // pointerdown suppresses all compatibility mouse events (mouseup, click).
   useEffect(() => {
     const onUp = () => {
       if (isDragging.current) handleDragEnd()
     }
-    window.addEventListener('mouseup', onUp)
-    return () => window.removeEventListener('mouseup', onUp)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    return () => {
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
   }, [handleDragEnd])
 
   return {
