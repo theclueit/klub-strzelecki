@@ -198,7 +198,7 @@ export default function ReservationsClient({ lanes }: { lanes: Lane[] }) {
       </tr>
     `).join('')
 
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Książka wejścia</title></head><body style="font-family:Arial,sans-serif;padding:20px;font-size:13px">
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Książka wejścia</title><style>@page{size:A4 landscape;margin:15mm}body{font-family:Arial,sans-serif;padding:0;font-size:13px}</style></head><body>
       <h2 style="margin-bottom:4px">Książka wejścia na strzelnicę</h2>
       <p style="color:#666;margin-top:0">${selectedLane.name} · ${dateStr}</p>
       <table style="width:100%;border-collapse:collapse;margin-top:12px">
