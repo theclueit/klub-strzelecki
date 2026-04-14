@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
+import { useState, useMemo, useRef, useCallback } from 'react'
 import type { Reservation } from './types'
 
 interface UseDragSelectionParams {
@@ -10,30 +10,28 @@ interface UseDragSelectionParams {
   openBookingFromSelection: (start: { sn: number; slotIdx: number }, end: { sn: number; slotIdx: number }) => void
 }
 
+/**
+ * Click-move-click slot selection:
+ * 1. Click a slot → marks start, selection follows mouse
+ * 2. Move mouse over slots → highlights range
+ * 3. Click again → finalizes selection, opens booking
+ */
 export function useDragSelection({ slots, slotMap, isPast, openBookingFromSelection }: UseDragSelectionParams) {
   const [dragStart, setDragStart] = useState<{ sn: number; slotIdx: number } | null>(null)
   const [dragEnd, setDragEnd] = useState<{ sn: number; slotIdx: number } | null>(null)
-  const isDragging = useRef(false)
-  // Tracks whether the last interaction was a mouse drag — used to skip the
-  // click event that fires right after mouseup so we don't double-trigger.
-  const skipNextClick = useRef(false)
-  const dragStartRef = useRef(dragStart)
-  const dragEndRef = useRef(dragEnd)
-  dragStartRef.current = dragStart
-  dragEndRef.current = dragEnd
+  const isSelecting = useRef(false)
 
-  // Keep a stable ref to openBookingFromSelection to avoid stale closures
   const openBookingRef = useRef(openBookingFromSelection)
   openBookingRef.current = openBookingFromSelection
 
-  // Drag selection: compute rectangle of selected cells
   const dragSelection = useMemo(() => {
     if (!dragStart || !dragEnd) return null
-    const minSn = Math.min(dragStart.sn, dragEnd.sn)
-    const maxSn = Math.max(dragStart.sn, dragEnd.sn)
-    const minSlot = Math.min(dragStart.slotIdx, dragEnd.slotIdx)
-    const maxSlot = Math.max(dragStart.slotIdx, dragEnd.slotIdx)
-    return { minSn, maxSn, minSlot, maxSlot }
+    return {
+      minSn: Math.min(dragStart.sn, dragEnd.sn),
+      maxSn: Math.max(dragStart.sn, dragEnd.sn),
+      minSlot: Math.min(dragStart.slotIdx, dragEnd.slotIdx),
+      maxSlot: Math.max(dragStart.slotIdx, dragEnd.slotIdx),
+    }
   }, [dragStart, dragEnd])
 
   const isInDragSelection = (sn: number, slotIdx: number) => {
@@ -42,95 +40,47 @@ export function useDragSelection({ slots, slotMap, isPast, openBookingFromSelect
       slotIdx >= dragSelection.minSlot && slotIdx <= dragSelection.maxSlot
   }
 
-  const clearDrag = useCallback(() => {
-    isDragging.current = false
-    dragStartRef.current = null
-    dragEndRef.current = null
+  const clearSelection = useCallback(() => {
+    isSelecting.current = false
     setDragStart(null)
     setDragEnd(null)
   }, [])
 
-  const handlePointerDown = (sn: number, slotIdx: number, pointerType: string) => {
-    if (isPast) return
-    if (pointerType === 'mouse') {
-      // Desktop: start drag — update refs immediately for mouseup handler
-      const pos = { sn, slotIdx }
-      isDragging.current = true
-      dragStartRef.current = pos
-      dragEndRef.current = pos
-      setDragStart(pos)
-      setDragEnd(pos)
-    }
-    // Touch: do nothing here — onClick will handle tap-to-select
+  // Called on pointerdown — unused for click-move-click but kept for API compat
+  const handlePointerDown = (_sn: number, _slotIdx: number, _pointerType: string) => {
+    // No-op: selection is handled entirely by handleSlotClick
   }
 
+  // Called on pointer enter — updates end of selection while mouse moves
   const handleDragMove = (sn: number, slotIdx: number) => {
-    if (!isDragging.current) return
-    const pos = { sn, slotIdx }
-    dragEndRef.current = pos
-    setDragEnd(pos)
+    if (!isSelecting.current) return
+    setDragEnd({ sn, slotIdx })
   }
 
-  const handleDragEnd = useCallback(() => {
-    if (!isDragging.current) return
-    isDragging.current = false
+  // Called on pointerup — unused
+  const handleDragEnd = useCallback(() => {}, [])
 
-    const start = dragStartRef.current
-    const end = dragEndRef.current
-
-    // Clear visual selection immediately
-    dragStartRef.current = null
-    dragEndRef.current = null
-    setDragStart(null)
-    setDragEnd(null)
-
-    // Block the click event that fires right after mouseup
-    skipNextClick.current = true
-
-    if (!start || !end) return
-
-    // Open booking (uses ref to avoid stale closure)
-    openBookingRef.current(start, end)
-  }, [clearDrag])
-
-  // Click handler: tap-to-select (primarily for touch, also works as fallback)
-  // 1st click = start, 2nd click = end -> open booking
+  // Main handler: click-move-click
   const handleSlotClick = (sn: number, slotIdx: number) => {
     if (isPast) return
-    // Skip if this click came from a mouse drag-end (already handled by handleDragEnd)
-    if (skipNextClick.current) {
-      skipNextClick.current = false
-      return
-    }
 
-    if (!dragStart) {
-      // First tap — mark start
+    if (!isSelecting.current) {
+      // First click — start selection
+      isSelecting.current = true
       setDragStart({ sn, slotIdx })
       setDragEnd({ sn, slotIdx })
     } else {
-      // Second tap — mark end and open booking
+      // Second click — finalize and open booking
       const start = dragStart
       const end = { sn, slotIdx }
+      isSelecting.current = false
       setDragStart(null)
       setDragEnd(null)
-      openBookingRef.current(start, end)
+      if (start) {
+        openBookingRef.current(start, end)
+      }
     }
   }
-
-  // Global pointerup listener to end drag (desktop only)
-  // Must use pointerup — not mouseup — because e.preventDefault() on
-  // pointerdown suppresses all compatibility mouse events (mouseup, click).
-  useEffect(() => {
-    const onUp = () => {
-      if (isDragging.current) handleDragEnd()
-    }
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
-    return () => {
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
-    }
-  }, [handleDragEnd])
 
   return {
     dragStart,
@@ -143,5 +93,6 @@ export function useDragSelection({ slots, slotMap, isPast, openBookingFromSelect
     handleDragMove,
     handleDragEnd,
     handleSlotClick,
+    clearSelection,
   }
 }
