@@ -1,17 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient, createAuthClient } from '@/lib/api-auth'
+import { confirmSchema, parseBody } from '@/lib/validation'
 
 // POST — convert hold → confirmed reservation
 // Token-based — hold_token acts as auth (short-lived, random UUID)
 export async function POST(req: NextRequest) {
   try {
     const supabase = createServiceClient()
-    const body = await req.json()
+    const parsed = parseBody(confirmSchema, await req.json())
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 })
+    }
     const {
       hold_token, guest_name, guest_email,
       guest_phone, guest_address, guest_document,
       notes, paid, pay_now,
-    } = body
+    } = parsed.data
 
     // Resolve member_id from session if authenticated — prevent IDOR
     let member_id: string | null = null
@@ -28,10 +32,6 @@ export async function POST(req: NextRequest) {
       }
     } catch {
       // Not authenticated — guest flow, member_id stays null
-    }
-
-    if (!hold_token) {
-      return NextResponse.json({ error: 'Brak hold_token' }, { status: 400 })
     }
 
     // Verify hold is still active — include time/lane info for price calculation

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/api-auth'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
+import { recreationalBookSchema, parseBody } from '@/lib/validation'
 import { p24RegisterTransaction } from '@/lib/przelewy24'
 import { sendRangeRulesEmail } from '@/lib/email'
 import { randomUUID } from 'crypto'
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
   try {
     // Rate limit: 10 bookings per hour per IP
     const ip = getClientIp(req)
-    const rl = checkRateLimit(`rec-book:${ip}`, { limit: 10, windowSeconds: 3600 })
+    const rl = await checkRateLimit(`rec-book:${ip}`, { limit: 10, windowSeconds: 3600 })
     if (!rl.success) {
       return NextResponse.json({ error: 'Zbyt wiele rezerwacji. Spróbuj później.' }, { status: 429 })
     }
@@ -47,19 +48,25 @@ export async function POST(req: NextRequest) {
       .ilike('notes', 'Strzelanie rekreacyjne%')
       .lt('created_at', new Date(Date.now() - 15 * 60 * 1000).toISOString())
 
-    const body = await req.json()
+    const parsed = parseBody(recreationalBookSchema, await req.json())
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 })
+    }
+    const body = parsed.data
 
     // Support both old format (single item) and new format (items array)
     let items: BookingItem[]
     if (body.items) {
       items = body.items
-    } else {
+    } else if (body.package_id && body.date && body.start_time && body.instructor_id) {
       items = [{
         package_id: body.package_id,
         date: body.date,
         start_time: body.start_time,
         instructor_id: body.instructor_id,
       }]
+    } else {
+      return NextResponse.json({ error: 'Brak pozycji do rezerwacji' }, { status: 400 })
     }
 
     const { notes } = body
@@ -84,7 +91,7 @@ export async function POST(req: NextRequest) {
 
     // Obsługa wielu osób (grupa) — tablica guests[]
     const guests: GuestData[] = body.guests
-      ? body.guests
+      ? body.guests.map((g: any) => ({ ...g, phone: g.phone || '' }))
       : [{
           name: body.guest_name || '',
           email: body.guest_email || '',

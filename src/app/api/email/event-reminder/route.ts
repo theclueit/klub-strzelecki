@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
     if (isAuthError(auth)) return auth
 
     // Rate limit: 5 mass email sends per hour
-    const rl = checkRateLimit(`email-reminder:${auth.member.id}`, { limit: 5, windowSeconds: 3600 })
+    const rl = await checkRateLimit(`email-reminder:${auth.member.id}`, { limit: 5, windowSeconds: 3600 })
     if (!rl.success) {
       return NextResponse.json({ error: 'Zbyt wiele wysyłek. Spróbuj później.' }, { status: 429 })
     }

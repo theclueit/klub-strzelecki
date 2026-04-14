@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
     if (isAuthError(auth)) return auth
 
     // Rate limit: 30 AI analyses per hour per user (costs ~$0.01 each)
-    const rl = checkRateLimit(`analyze:${auth.member.id}`, { limit: 30, windowSeconds: 3600 })
+    const rl = await checkRateLimit(`analyze:${auth.member.id}`, { limit: 30, windowSeconds: 3600 })
     if (!rl.success) {
       return NextResponse.json({ error: 'Zbyt wiele analiz. Spróbuj za chwilę.' }, { status: 429 })
     }

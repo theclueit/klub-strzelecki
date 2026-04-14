@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/api-auth'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
+import { holdCreateSchema, holdExtendSchema, holdDeleteSchema, parseBody } from '@/lib/validation'
 import { randomUUID } from 'crypto'
 
 const HOLD_DURATION_SECONDS = 180 // 3 minutes
@@ -11,25 +12,24 @@ export async function POST(req: NextRequest) {
   try {
     // Rate limit: 20 holds per hour per IP (prevent DoS flood)
     const ip = getClientIp(req)
-    const rl = checkRateLimit(`hold:${ip}`, { limit: 20, windowSeconds: 3600 })
+    const rl = await checkRateLimit(`hold:${ip}`, { limit: 20, windowSeconds: 3600 })
     if (!rl.success) {
       return NextResponse.json({ error: 'Zbyt wiele prób rezerwacji. Spróbuj później.' }, { status: 429 })
     }
 
     const supabase = createServiceClient()
-    const body = await req.json()
-    const { lane_id, station_number, stations_count, reservation_date, start_time, end_time } = body
-
-    if (!lane_id || !station_number || !reservation_date || !start_time || !end_time) {
-      return NextResponse.json({ error: 'Brakuje danych' }, { status: 400 })
+    const parsed = parseBody(holdCreateSchema, await req.json())
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 })
     }
+    const { lane_id, station_number, stations_count, reservation_date, start_time, end_time } = parsed.data
 
     // Clean up expired holds first
     await supabase.rpc('cleanup_expired_holds')
 
     const holdToken = randomUUID()
     const holdExpiresAt = new Date(Date.now() + HOLD_DURATION_SECONDS * 1000).toISOString()
-    const stationsCount = stations_count || 1
+    const stationsCount = stations_count
 
     const inserts = Array.from({ length: stationsCount }, (_, i) => ({
       lane_id,
@@ -72,12 +72,11 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const supabase = createServiceClient()
-    const body = await req.json()
-    const { hold_token } = body
-
-    if (!hold_token) {
-      return NextResponse.json({ error: 'Brak hold_token' }, { status: 400 })
+    const parsed = parseBody(holdExtendSchema, await req.json())
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 })
     }
+    const { hold_token } = parsed.data
 
     const newExpiresAt = new Date(Date.now() + HOLD_DURATION_SECONDS * 1000).toISOString()
 
@@ -112,11 +111,11 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const supabase = createServiceClient()
-    const { hold_token } = await req.json()
-
-    if (!hold_token) {
-      return NextResponse.json({ error: 'Brak hold_token' }, { status: 400 })
+    const parsed = parseBody(holdDeleteSchema, await req.json())
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 })
     }
+    const { hold_token } = parsed.data
 
     await supabase
       .from('lane_reservations')

@@ -2,40 +2,26 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/api-auth'
 import { sendGuestRegistrationConfirmation } from '@/lib/email'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
+import { registrationSchema, parseBody } from '@/lib/validation'
 
 // Guest registration
 export async function POST(req: NextRequest) {
   try {
     // Rate limit: 10 registrations per hour per IP
     const ip = getClientIp(req)
-    const rl = checkRateLimit(`rejestracja:${ip}`, { limit: 10, windowSeconds: 3600 })
+    const rl = await checkRateLimit(`rejestracja:${ip}`, { limit: 10, windowSeconds: 3600 })
     if (!rl.success) {
       return NextResponse.json({ error: 'Zbyt wiele rejestracji. Spróbuj później.' }, { status: 429 })
     }
 
     const supabase = createServiceClient()
-    const body = await req.json()
-    const { event_id, full_name, email, phone, experience, has_license, license_number, message, disciplines } = body as {
-      event_id: string
-      full_name: string
-      email: string
-      phone?: string
-      experience?: string
-      has_license: boolean
-      license_number?: string
-      message?: string
-      disciplines?: Array<{
-        event_discipline_id: string
-        event_discipline_slot_id?: string
-        own_weapon: boolean
-      }>
+    const parsed = parseBody(registrationSchema, await req.json())
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 })
     }
+    const { event_id, full_name, email, phone, experience, has_license, license_number, message, disciplines } = parsed.data
 
-    if (!event_id || !full_name || !email) {
-      return NextResponse.json({ error: 'Brak wymaganych pól (event_id, full_name, email)' }, { status: 400 })
-    }
-
-    // Validate email format
+    // Validate email format (Zod already validates, but keep as double-check)
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return NextResponse.json({ error: 'Nieprawidłowy format email' }, { status: 400 })
     }

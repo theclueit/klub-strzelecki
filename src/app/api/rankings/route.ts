@@ -6,7 +6,7 @@ import { checkRateLimit } from '@/lib/rate-limit'
 export async function POST() {
   try {
     // Rate limit: max 10 recalculations per minute (anti-DoS)
-    const rl = checkRateLimit('rankings:global', { limit: 10, windowSeconds: 60 })
+    const rl = await checkRateLimit('rankings:global', { limit: 10, windowSeconds: 60 })
     if (!rl.success) {
       return NextResponse.json({ message: 'Ranking update skipped (rate limited)' })
     }

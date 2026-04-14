@@ -1,32 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/api-auth'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
+import { guestReservationSchema, parseBody } from '@/lib/validation'
 
 // Guest lane reservation — public endpoint, auto-creates member account
 export async function POST(req: NextRequest) {
   try {
     // Rate limit: 10 guest reservations per hour per IP
     const ip = getClientIp(req)
-    const rl = checkRateLimit(`guest-res:${ip}`, { limit: 10, windowSeconds: 3600 })
+    const rl = await checkRateLimit(`guest-res:${ip}`, { limit: 10, windowSeconds: 3600 })
     if (!rl.success) {
       return NextResponse.json({ error: 'Zbyt wiele rezerwacji. Spróbuj później.' }, { status: 429 })
     }
 
     const supabase = createServiceClient()
-    const body = await req.json()
+    const parsed = parseBody(guestReservationSchema, await req.json())
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 })
+    }
     const {
       lane_id, station_number, stations_count, reservation_date,
       start_time, end_time, notes,
       guest_name, guest_email, guest_phone, guest_address, guest_document,
       pay_now,
-    } = body
-
-    if (!lane_id || !station_number || !reservation_date || !start_time || !end_time) {
-      return NextResponse.json({ error: 'Brakuje danych rezerwacji' }, { status: 400 })
-    }
-    if (!guest_name || !guest_email || !guest_address || !guest_document) {
-      return NextResponse.json({ error: 'Podaj imię, email, adres i numer dokumentu' }, { status: 400 })
-    }
+    } = parsed.data
 
     // Validate email format
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guest_email)) {

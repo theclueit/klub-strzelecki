@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
+import { feedbackSchema, parseBody } from '@/lib/validation'
 
 const GITHUB_REPO = process.env.GITHUB_FEEDBACK_REPO || 'theclueit/klub-strzelecki'
 
@@ -7,16 +8,16 @@ export async function POST(req: NextRequest) {
   try {
     // Rate limit: 5 feedback per hour per IP
     const ip = getClientIp(req)
-    const rl = checkRateLimit(`feedback:${ip}`, { limit: 5, windowSeconds: 3600 })
+    const rl = await checkRateLimit(`feedback:${ip}`, { limit: 5, windowSeconds: 3600 })
     if (!rl.success) {
       return NextResponse.json({ error: 'Zbyt wiele zgłoszeń. Spróbuj później.' }, { status: 429 })
     }
 
-    const { type, title, description, email } = await req.json()
-
-    if (!title || !description) {
-      return NextResponse.json({ error: 'Tytuł i opis są wymagane' }, { status: 400 })
+    const parsed = parseBody(feedbackSchema, await req.json())
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 })
     }
+    const { type, title, description, email } = parsed.data
 
     const labels: string[] = []
     if (type === 'bug') labels.push('bug')
